@@ -1,0 +1,200 @@
+-- ========================
+-- Auto Chest | WindUI
+-- ========================
+local WindUI = loadstring(game:HttpGet('https://github.com/Footagesus/WindUI/releases/latest/download/main.lua'))()
+
+local Players             = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local LocalPlayer         = Players.LocalPlayer
+
+-- ========================
+-- Helpers
+-- ========================
+local function getHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function pressKey(keyCode)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
+end
+
+-- ========================
+-- Window Setup
+-- ========================
+local Window = WindUI:CreateWindow({
+    Title       = "Auto Chest",
+    Icon        = "package",
+    Author      = "MonHub",
+    Folder      = "AutoChestConfig",
+    Save        = true,
+    Size        = UDim2.fromOffset(400, 300),
+    Theme       = "Dark",
+    Acrylic     = false,
+    Transparent = false,
+})
+
+-- ========================
+-- ConfigManager (กันพัง ถ้า ConfigManager ใช้ไม่ได้บน executor นี้)
+-- ========================
+local ConfigManager
+do
+    local ok, cm = pcall(function() return Window.ConfigManager end)
+    if ok and cm then ConfigManager = cm end
+end
+
+local AutoConfig
+if ConfigManager then
+    local ok, cfg = pcall(function() return ConfigManager:CreateConfig("AutoChestConfig") end)
+    if ok then AutoConfig = cfg end
+end
+
+if not AutoConfig then
+    AutoConfig = { Save = function() end, Load = function() end }
+end
+
+local function GetValue(flagName, defaultValue)
+    local status, value = pcall(function() return Window:GetFlag(flagName) end)
+    if status and value ~= nil then return value end
+    return defaultValue
+end
+
+-- ========================
+-- Auto Chest Engine
+-- ========================
+local autoChestEnabled = false
+local autoChestThread  = nil
+local TELEPORT_DELAY   = 0.3 -- ดีเลย์ระหว่างวาปไปกล่องแต่ละลูก
+
+-- workspace.RuntimeCache.RuntimeCacheClient.Chest
+local function getChestFolder()
+    local rc  = workspace:FindFirstChild("RuntimeCache")
+    local rcc = rc and rc:FindFirstChild("RuntimeCacheClient")
+    return rcc and rcc:FindFirstChild("Chest")
+end
+
+-- Chest[<uuid>].Chest2Particle.Particle  (uuid เปลี่ยนทุกลูก สแกนจากชื่อจริงเลยไม่ต้องเจาะจง)
+local function getChestTargetPart(chestModel)
+    local particleFolder = chestModel:FindFirstChild("Chest2Particle")
+    return particleFolder and particleFolder:FindFirstChild("Particle")
+end
+
+local function scanChests()
+    local found = {}
+    local folder = getChestFolder()
+    if folder then
+        for _, child in ipairs(folder:GetChildren()) do
+            if getChestTargetPart(child) then
+                table.insert(found, child)
+            end
+        end
+    end
+    return found
+end
+
+local function stopAutoChest()
+    autoChestEnabled = false
+    if autoChestThread then
+        task.cancel(autoChestThread)
+        autoChestThread = nil
+    end
+end
+
+local function startAutoChest()
+    stopAutoChest()
+    autoChestEnabled = true
+    autoChestThread = task.spawn(function()
+        while autoChestEnabled do
+            local chests = scanChests()
+
+            if #chests == 0 then
+                task.wait(0.5)
+                continue
+            end
+
+            for _, chest in ipairs(chests) do
+                if not autoChestEnabled then break end
+
+                local part = getChestTargetPart(chest)
+                local hrp  = getHRP()
+
+                if part and hrp then
+                    pcall(function()
+                        hrp.CFrame = CFrame.new(part.Position)
+                    end)
+                    task.wait(0.2) -- รอตัวละครวาปถึงก่อนกด E
+                    pressKey(Enum.KeyCode.E)
+                end
+
+                task.wait(TELEPORT_DELAY)
+            end
+        end
+    end)
+end
+
+-- ========================
+-- Window Tabs Setup
+-- ========================
+local MainTab = Window:Tab({ Title = "Auto Chest", Icon = "package" })
+
+MainTab:Section({ Title = "Chest Farming" })
+
+MainTab:Toggle({
+    Title    = "Start Auto Chest",
+    Icon     = "play",
+    Flag     = "autoChestEnabled",
+    Default  = false,
+    Callback = function(state)
+        if state then startAutoChest() else stopAutoChest() end
+    end,
+})
+
+MainTab:Slider({
+    Title    = "Teleport Delay (sec)",
+    Icon     = "timer",
+    Flag     = "chestDelay",
+    Default  = 0.3,
+    Min      = 0.1,
+    Max      = 2,
+    Step     = 0.1,
+    Callback = function(v)
+        TELEPORT_DELAY = v
+    end,
+})
+
+-- ========================
+-- Config Manager (Auto Save / Auto Load)
+-- ========================
+task.spawn(function()
+    while true do
+        task.wait(5)
+        pcall(function() AutoConfig:Save() end)
+    end
+end)
+
+pcall(function()
+    game:BindToClose(function()
+        pcall(function() AutoConfig:Save() end)
+    end)
+end)
+
+task.spawn(function()
+    task.wait(1)
+    pcall(function() AutoConfig:Load() end)
+
+    TELEPORT_DELAY = GetValue("chestDelay", 0.3)
+    if GetValue("autoChestEnabled", false) then
+        startAutoChest()
+    end
+end)
+
+WindUI:Notify({
+    Title   = "Auto Chest ✅",
+    Content = "โหลดสคริปต์เสร็จแล้ว พร้อมใช้งาน",
+    Duration = 3,
+    Icon    = "check",
+})
