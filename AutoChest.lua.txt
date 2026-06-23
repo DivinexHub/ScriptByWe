@@ -1,5 +1,5 @@
 -- ========================
--- Auto Chest | WindUI
+-- Auto Chest | WindUI (Fixed & Updated)
 -- ========================
 local WindUI = loadstring(game:HttpGet('https://github.com/Footagesus/WindUI/releases/latest/download/main.lua'))()
 
@@ -24,7 +24,7 @@ local function pressKey(keyCode)
 end
 
 -- ========================
--- Window Setup
+-- Window Setup (แก้ไขปัญหา Floating UI / ลากเมนูไม่ได้)
 -- ========================
 local Window = WindUI:CreateWindow({
     Title       = "Auto Chest",
@@ -38,8 +38,16 @@ local Window = WindUI:CreateWindow({
     Transparent = false,
 })
 
+-- บังคับให้ระบบ UI ทำงานบนเฟรมหลักและอัปเดต Position ให้ถูกต้อง (แก้ UI ลอย/ค้าง)
+pcall(function()
+    if Window.Frame then
+        Window.Frame.Active = true
+        Window.Frame.Draggable = true
+    end
+end)
+
 -- ========================
--- ConfigManager (กันพัง ถ้า ConfigManager ใช้ไม่ได้บน executor นี้)
+-- ConfigManager
 -- ========================
 local ConfigManager
 do
@@ -64,25 +72,25 @@ local function GetValue(flagName, defaultValue)
 end
 
 -- ========================
--- Auto Chest Engine
+-- Auto Chest Engine (อัปเดตเป้าหมายใหม่)
 -- ========================
 local autoChestEnabled = false
 local autoChestThread  = nil
-local TELEPORT_DELAY   = 0.3 -- ดีเลย์ระหว่างวาปไปกล่องแต่ละลูก
+local TELEPORT_DELAY   = 0.3
 
--- workspace.RuntimeCache.RuntimeCacheClient.Chest
+-- ค้นหาโฟลเดอร์ Chest ใน workspace
 local function getChestFolder()
     local rc  = workspace:FindFirstChild("RuntimeCache")
     local rcc = rc and rc:FindFirstChild("RuntimeCacheClient")
     return rcc and rcc:FindFirstChild("Chest")
 end
 
--- Chest[<uuid>].Chest2Particle.Particle  (uuid เปลี่ยนทุกลูก สแกนจากชื่อจริงเลยไม่ต้องเจาะจง)
+-- [แก้ไขจุดที่ 1] เปลี่ยนไปค้นหา "TheBoxParticle" แทนอันเดิม
 local function getChestTargetPart(chestModel)
-    local particleFolder = chestModel:FindFirstChild("Chest2Particle")
-    return particleFolder and particleFolder:FindFirstChild("Particle")
+    return chestModel:FindFirstChild("TheBoxParticle")
 end
 
+-- สแกนหากล่องทั้งหมดที่เข้าเงื่อนไข (ไม่เจาะจง UUID เพราะชื่อเปลี่ยนตลอด)
 local function scanChests()
     local found = {}
     local folder = getChestFolder()
@@ -124,10 +132,11 @@ local function startAutoChest()
 
                 if part and hrp then
                     pcall(function()
+                        -- วาปไปตำแหน่งของ TheBoxParticle
                         hrp.CFrame = CFrame.new(part.Position)
                     end)
-                    task.wait(0.2) -- รอตัวละครวาปถึงก่อนกด E
-                    pressKey(Enum.KeyCode.E)
+                    task.wait(0.2) -- รอตัวละครเสถียรหลังวาป
+                    pressKey(Enum.KeyCode.E) -- กดปุ่ม E
                 end
 
                 task.wait(TELEPORT_DELAY)
@@ -194,7 +203,7 @@ end)
 
 WindUI:Notify({
     Title   = "Auto Chest ✅",
-    Content = "โหลดสคริปต์เสร็จแล้ว พร้อมใช้งาน",
+    Content = "แก้ไขระบบและโหลดสคริปต์เสร็จสิ้น!",
     Duration = 3,
     Icon    = "check",
 })
