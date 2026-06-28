@@ -1,0 +1,2003 @@
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- ========================
+-- Services
+-- ========================
+local Players             = game:GetService("Players")
+local UserInputService    = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local HttpService         = game:GetService("HttpService")
+local TeleportService     = game:GetService("TeleportService")
+local RunService          = game:GetService("RunService")
+local LocalPlayer         = Players.LocalPlayer
+local Camera              = workspace.CurrentCamera
+local VirtualUser         = game:GetService("VirtualUser")
+
+-- ========================
+-- Discord Link
+-- ========================
+local discordLink = "https://discord.gg/eBX22G5U6"
+
+-- ========================
+-- Theme (Yellow / White - เบาตา)
+-- ========================
+-- ธีมเหลือง-ขาวสบายตา ทำเป็นธีมของตัวเองแล้วเซ็ตให้ Window ใช้ตรง ๆ
+local DivinexTheme = {
+    Name           = "DivinexYellow",
+    Accent         = Color3.fromHex("#FFC400"), -- เหลืองทอง (จุดเน้น/ปุ่ม/ติ๊กถูก)
+    Background     = Color3.fromHex("#FFFDF6"), -- ขาวอมเหลืองอ่อน พื้นหลังสบายตา
+    Outline        = Color3.fromHex("#F0E3B4"), -- เส้นขอบเหลืองพาสเทล
+    Text           = Color3.fromHex("#3B3000"), -- ตัวอักษรน้ำตาลเข้มอมเหลือง อ่านง่ายบนพื้นขาว
+    Placeholder    = Color3.fromHex("#A89F73"),
+    Button         = Color3.fromHex("#FFF3C4"), -- ปุ่มเหลืองอ่อน
+    Icon           = Color3.fromHex("#B8860B"), -- ไอคอนเหลืองเข้ม (DarkGoldenrod)
+}
+
+-- ========================
+-- Window Setup
+-- ========================
+-- ติดตั้งธีมเหลือง-ขาวของ Divinex "ก่อน" สร้างหน้าต่าง แล้วใช้ชื่อธีมนี้ตรง ๆ ตอน CreateWindow
+-- (กันปัญหาธีม Dark ขึ้นมาแวบหนึ่งก่อนสลับเป็นเหลือง-ขาวทีหลัง)
+pcall(function()
+    WindUI:AddTheme(DivinexTheme)
+end)
+
+local Window = WindUI:CreateWindow({
+    Title       = "Divinex | V.1 AFS:OG",
+    Icon        = "rbxassetid://89414343155030",
+    Author      = "Divinex",
+    Folder      = "DivinexConfigs",
+    Save        = true,
+    Size        = UDim2.fromOffset(460, 560),
+    Theme       = "DivinexYellow", -- ใช้ธีมเหลือง-ขาวสบายตาตั้งแต่เปิดมาเลย
+    Acrylic     = false,
+    Transparent = false,
+})
+
+-- กันเหนียวอีกชั้น เผื่อบางเวอร์ชันของ WindUI ไม่รับ Theme เป็นชื่อธีมที่เพิ่งเพิ่มตอน CreateWindow โดยตรง
+pcall(function()
+    WindUI:SetTheme("DivinexYellow")
+end)
+
+-- ========================
+-- Initialization ConfigManager (WindUI) - Auto Save/Load Config
+-- ========================
+local ConfigManager
+do
+    local ok, cm = pcall(function() return Window.ConfigManager end)
+    if ok and cm then
+        ConfigManager = cm
+        pcall(function() ConfigManager:SetFolder("Divinex") end)
+    end
+end
+
+if not ConfigManager then
+    ConfigManager = { SetFolder = function() end, Save = function() end, Load = function() end }
+end
+
+local function SaveCurrentConfig()
+    pcall(function()
+        ConfigManager:Save("default")
+    end)
+end
+
+local function GetValue(flagName, defaultValue)
+    local status, value = pcall(function() return Window:GetFlag(flagName) end)
+    if status and value ~= nil then return value end
+    return defaultValue
+end
+
+-- Auto-Save แบบต่อเนื่อง: เซฟ config ทุก ๆ 15 วินาทีเผื่อเหตุการณ์ที่ค่าเปลี่ยนโดยไม่ผ่าน Callback
+task.spawn(function()
+    while true do
+        task.wait(15)
+        SaveCurrentConfig()
+    end
+end)
+
+-- ========================
+-- State & Variables
+-- ========================
+local isBossActiveNow = false
+local farmingEnabled     = false
+local farmThread         = nil
+local targetBosses = {
+    ["Great Ape"]     = false,
+    ["Armored Titan"] = false,
+    ["Crocodile"]     = false,
+    ["Puya"]          = false,
+    ["SpecialGrade"]  = false,
+    ["Igros"]         = false,
+}
+local savedPosition       = nil
+local useSavePosEnabled  = false
+
+local autoEquipEnabled   = false
+local autoEquipThread    = nil
+local selectedSlot       = 1
+local strokeConn         = nil
+local isEquipping        = false
+
+local autoSkillEnabled   = false
+local selectedSkills     = {}
+local autoSkillThread    = nil
+
+local autoResetEnabled   = false
+local hasResetThisCycle  = false
+
+local autoGrabEnabled    = false
+local autoGrabThread     = nil
+local fruitTargets = {
+    { name = "Rubber",     enabled = false },
+    { name = "Quake",      enabled = false },
+    { name = "Chop",       enabled = false },
+    { name = "Flame",      enabled = false },
+    { name = "Ice",        enabled = false },
+    { name = "Magma",      enabled = false },
+    { name = "Light",      enabled = false },
+}
+
+-- Server Hop State (ตั้งค่าหลัก)
+local autoHopEnabled     = false
+local autoHopThread      = nil
+local hopInterval        = 10 
+local hopMinAge          = 30 -- บังคับค่าเริ่มต้น 30 นาทีขึ้นไปตามสั่ง
+
+local antiAfkEnabled     = true
+local antiAfkThread      = nil
+
+local availableZones     = {}
+local selectedZone       = nil
+local zoneDropdown       = nil
+
+local trainX4Enabled     = false
+local trainX4Thread      = nil
+local lockedTrainPos     = nil
+
+local selectedMobs       = {}
+local availableMobs      = {}
+local farmMobEnabled     = false
+local farmMobThread      = nil
+local mobDropdown        = nil
+
+local selectedNpc        = nil
+local availableNpcs      = {}
+local npcDropdown        = nil
+
+local autoKuramaEnabled   = false
+local autoKuramaThread    = nil
+local kuramaSkillEnabled  = false
+local kuramaSkillThread   = nil
+local kuramaSelectedSkills = {}
+local isKuramaInArena      = false
+local camLockConn         = nil
+local mouseClickThread    = nil
+
+-- Sukuna Boss State
+local autoSukunaEnabled    = false
+local autoSukunaThread     = nil
+local sukunaSkillEnabled   = false
+local sukunaSkillThread    = nil
+local sukunaSelectedSkills = {}
+local isSukunaInArena      = false
+local sukunaCamLockConn    = nil
+local sukunaMouseClickThread = nil
+
+-- ========================
+-- Priority System State (ลำดับการทำงานก่อน/หลังของแต่ละฟังก์ชัน)
+-- ========================
+-- รายชื่อฟังก์ชัน auto ทั้งหมดที่อนุญาตให้จัดลำดับความสำคัญได้
+-- ตัวเลข = ลำดับหมวดหมู่ (อิงตามหมายเลขแท็บ/หมวดหมู่) ยิ่งน้อย = ทำงานก่อน
+local priorityOrder = {
+    "1. Main Boss",
+    "2. Extra Boss (Kurama/Sukuna)",
+    "3. Auto Grab Fruit",
+    "4. Mob Farm",
+    "5. Auto Skill",
+    "6. Train x4",
+}
+local priorityDropdown = nil
+
+-- GetPriorityRank: คืนลำดับ (index น้อย = ก่อน) ของชื่อระบบ ใช้เทียบความสำคัญตอนรันไทม์
+local function GetPriorityRank(label)
+    for i, v in ipairs(priorityOrder) do
+        if v == label then return i end
+    end
+    return 999
+end
+
+-- ระบบนี้ "ไม่ลบ/ไม่แก้" การทำงานเดิมของฟังก์ชันแต่ละตัว แต่ใช้ลำดับเพื่อกัน-ชน (yield)
+-- ระหว่างระบบที่แข่งกันสั่ง teleport ตัวละครในเฟรมเดียวกัน เช่น Main Boss ชนกับ Mob Farm
+-- ค่า true = ระบบ A (rankA) ควรได้สิทธิ์ทำงานก่อน B (rankB) ในรอบนี้
+local function PriorityAllows(systemLabel, blockerLabel)
+    return GetPriorityRank(systemLabel) <= GetPriorityRank(blockerLabel)
+end
+
+local priorityListText = ""
+local function RebuildPriorityListText()
+    local lines = {}
+    for i, v in ipairs(priorityOrder) do
+        table.insert(lines, i .. ". " .. v)
+    end
+    priorityListText = table.concat(lines, "\n")
+end
+RebuildPriorityListText()
+
+local priorityParagraph = nil
+local function RefreshPriorityParagraph()
+    RebuildPriorityListText()
+    if priorityParagraph then
+        pcall(function() priorityParagraph:SetDesc(priorityListText) end)
+    end
+end
+
+-- ฟังก์ชันจริงสำหรับเซฟลำดับลงไฟล์ถูกกำหนดค่าไว้ด้านล่างของสคริปต์ (ใกล้ส่วน Auto Save/Load)
+-- ประกาศล่วงหน้าตรงนี้เพื่อให้ movePriority() เรียกใช้ได้ทันทีโดยไม่ต้องสลับลำดับโค้ดทั้งไฟล์
+local savePriorityOrderToFile = function() end
+
+local function movePriority(label, direction)
+    local idx = nil
+    for i, v in ipairs(priorityOrder) do
+        if v == label then idx = i break end
+    end
+    if not idx then return end
+    local newIdx = idx + direction
+    if newIdx < 1 or newIdx > #priorityOrder then return end
+    priorityOrder[idx], priorityOrder[newIdx] = priorityOrder[newIdx], priorityOrder[idx]
+    RefreshPriorityParagraph()
+    savePriorityOrderToFile()
+end
+
+-- ========================
+-- Configurations
+-- ========================
+local bossPaths = {
+    ["Great Ape"]     = "GreatApe",
+    ["Armored Titan"] = "ArmoredTitan",
+    ["Crocodile"]     = "Crocodile",
+    ["Puya"]          = "Puya",
+    ["SpecialGrade"]  = "SpecialGrade",
+    ["Igros"]         = "Igros",
+}
+
+local slotKeyCode = {
+    [1] = Enum.KeyCode.One,
+    [2] = Enum.KeyCode.Two,
+    [3] = Enum.KeyCode.Three,
+    [4] = Enum.KeyCode.Four,
+    [5] = Enum.KeyCode.Five,
+}
+
+local hotbarSlotNames = { "Strength", "Sword", "Durability", "Chakra" }
+
+-- ========================
+-- Helpers
+-- ========================
+local function getHRP()
+    local char = LocalPlayer.Character
+    return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+local function getCharacter()
+    return LocalPlayer.Character
+end
+
+local function pressKey(keyCode)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true,  keyCode, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
+end
+
+local function findProximityPrompt(model)
+    if not model then return nil end
+    for _, v in ipairs(model:GetDescendants()) do
+        if v:IsA("ProximityPrompt") then return v end
+    end
+    return nil
+end
+
+local function triggerPrompt(prompt)
+    if not prompt then return false end
+    pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            pressKey(prompt.KeyboardKeyCode ~= Enum.KeyCode.Unknown and prompt.KeyboardKeyCode or Enum.KeyCode.E)
+        end
+    end)
+    return true
+end
+
+local function getBossPosition(bossName)
+    local folderName = bossPaths[bossName]
+    if not folderName then return nil end
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    local bossModel = clientEntities:FindFirstChild(folderName)
+    if not bossModel then return nil end
+    local root = bossModel:FindFirstChild("HumanoidRootPart") or bossModel:FindFirstChild("RootPart") or bossModel.PrimaryPart
+    if not root then
+        for _, part in ipairs(bossModel:GetDescendants()) do
+            if part:IsA("BasePart") then root = part break end
+        end
+    end
+    return root and root.Position
+end
+
+local function checkAnyBossActive()
+    for bossName, enabled in pairs(targetBosses) do
+        if enabled and getBossPosition(bossName) then
+            return true
+        end
+    end
+    return false
+end
+
+-- ========================
+-- Slot Stroke Engine
+-- ========================
+local function getSlotStroke()
+    local ok, stroke = pcall(function()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        local hotbar    = playerGui and playerGui:FindFirstChild("Main") and playerGui.Main:FindFirstChild("HUD") and playerGui.Main.HUD:FindFirstChild("Hotbar")
+        if not hotbar then return nil end
+        local slot = nil
+        local slotName = hotbarSlotNames[selectedSlot]
+        if slotName then slot = hotbar:FindFirstChild(slotName) end
+        if not slot then
+            for _, child in ipairs(hotbar:GetChildren()) do
+                if child:IsA("GuiObject") and child.LayoutOrder == selectedSlot then
+                    slot = child break
+                end
+            end
+        end
+        if not slot then
+            local validSlots = {}
+            for _, child in ipairs(hotbar:GetChildren()) do
+                if child:IsA("ImageButton") or child:IsA("TextButton") or child.Name:lower():find("slot") then
+                    table.insert(validSlots, child)
+                end
+            end
+            table.sort(validSlots, function(a, b) return (a.LayoutOrder or 0) < (b.LayoutOrder or 0) end)
+            slot = validSlots[selectedSlot]
+        end
+        return slot and slot:FindFirstChildOfClass("UIStroke") or nil
+    end)
+    return ok and stroke or nil
+end
+
+local function isStrokeBlack(stroke)
+    if not stroke then return false end
+    local c = stroke.Color
+    return c.R < 0.1 and c.G < 0.1 and c.B < 0.1
+end
+
+-- ========================
+-- Fruit Engine (Priority 3)
+-- ========================
+-- ดีเลย์หลังวาปไปหาโมเดล Fruit ก่อนกด ProximityPrompt: ปรับจาก 3 วิ -> 1.5 วิ ตามคำสั่ง
+local FRUIT_GRAB_DELAY = 1.5
+
+local function tryGrabFruit(fruitName)
+    local model = workspace:FindFirstChild(fruitName)
+    if not model then return false end
+    local hrp = getHRP()
+    if not hrp then return false end
+
+    -- บันทึกตำแหน่งเดิมก่อนไป grab
+    local originalPosition = hrp.CFrame
+    
+    local targetPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("RootPart")
+    if not targetPart then
+        for _, part in ipairs(model:GetDescendants()) do
+            if part:IsA("BasePart") then targetPart = part break end
+        end
+    end
+    if not targetPart then return false end
+
+    hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 3, 0))
+    WindUI:Notify({ Title = "Found: " .. fruitName, Content = "Teleported! Waiting " .. FRUIT_GRAB_DELAY .. "s before grabbing...", Duration = 3, Icon = "zap" })
+    task.wait(FRUIT_GRAB_DELAY)
+
+    local stillExists = workspace:FindFirstChild(fruitName)
+    if not stillExists then
+        WindUI:Notify({ Title = fruitName .. " disappeared!", Duration = 2, Icon = "x" })
+        -- กลับไปตำแหน่งเดิมถึงแม้ผลไม้หายไป
+        hrp.CFrame = originalPosition
+        return false
+    end
+
+    local prompt = findProximityPrompt(stillExists)
+    if prompt then
+        triggerPrompt(prompt)
+        WindUI:Notify({ Title = "Grabbed: " .. fruitName, Content = "ProximityPrompt triggered! Returning to position...", Duration = 3, Icon = "check-circle" })
+        task.wait(1)
+        -- กลับไปตำแหน่งเดิมหลังเก็บสำเร็จ
+        hrp.CFrame = originalPosition
+        return true
+    else
+        WindUI:Notify({ Title = "No Prompt on " .. fruitName, Duration = 2, Icon = "alert-circle" })
+        -- กลับไปตำแหน่งเดิมถ้าไม่มี Prompt
+        hrp.CFrame = originalPosition
+        return false
+    end
+end
+
+local function getAnyPendingFruitModel()
+    for _, fruit in ipairs(fruitTargets) do
+        if fruit.enabled then
+            local model = workspace:FindFirstChild(fruit.name)
+            if model then return fruit.name end
+        end
+    end
+    return nil
+end
+
+local function grabAllPendingFruits()
+    for _, fruit in ipairs(fruitTargets) do
+        if fruit.enabled then
+            local model = workspace:FindFirstChild(fruit.name)
+            if model then
+                tryGrabFruit(fruit.name)
+                task.wait(1)
+            end
+        end
+    end
+end
+
+local function stopAutoGrab()
+    autoGrabEnabled = false
+    if autoGrabThread then task.cancel(autoGrabThread) autoGrabThread = nil end
+end
+
+local function startAutoGrab()
+    stopAutoGrab()
+    autoGrabEnabled = true
+    autoGrabThread = task.spawn(function()
+        while autoGrabEnabled do
+            if checkAnyBossActive() or (autoKuramaEnabled and workspace.Map.Arenas.Boss.KuramaArena:FindFirstChild("Totem")) then
+                task.wait(1)
+                continue
+            end
+
+            local fruitName = getAnyPendingFruitModel()
+            if fruitName then
+                tryGrabFruit(fruitName)
+                task.wait(1)
+            else
+                task.wait(1)
+            end
+        end
+    end)
+end
+
+-- ========================
+-- Scan NPC from Quests
+-- ========================
+local function scanNpcsFromQuests()
+    local npcs = {}
+    local questsFolder = workspace:FindFirstChild("Quests")
+    
+    if questsFolder then
+        for _, npc in ipairs(questsFolder:GetChildren()) do
+            if npc:IsA("Model") then
+                table.insert(npcs, npc.Name)
+            end
+        end
+    end
+    
+    return npcs
+end
+
+local function goToNpc(npcName)
+    if not npcName or npcName == "" then
+        WindUI:Notify({ Title = "Go to NPC", Content = "Please select an NPC first!", Duration = 3, Icon = "alert-circle" })
+        return
+    end
+    
+    local questsFolder = workspace:FindFirstChild("Quests")
+    if not questsFolder then return end
+    
+    local npc = questsFolder:FindFirstChild(npcName)
+    if not npc then
+        WindUI:Notify({ Title = "NPC Not Found", Content = npcName .. " not found!", Duration = 3, Icon = "x" })
+        return
+    end
+    
+    local targetPart = npc.PrimaryPart or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChild("RootPart")
+    if targetPart then
+        local hrp = getHRP()
+        if hrp then
+            hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(3, 0, 3))
+            WindUI:Notify({ Title = "Teleported to NPC", Content = "Arrived at " .. npcName, Duration = 3, Icon = "map-pin" })
+        end
+    else
+        WindUI:Notify({ Title = "Invalid NPC", Content = "No valid part found on " .. npcName, Duration = 3, Icon = "alert-circle" })
+    end
+end
+
+-- ========================
+-- Auto Equip Engine
+-- ========================
+local function stopAutoEquip()
+    autoEquipEnabled = false
+    if strokeConn then strokeConn:Disconnect() strokeConn = nil end
+    if autoEquipThread then task.cancel(autoEquipThread) autoEquipThread = nil end
+end
+
+local function doEquip()
+    if isEquipping then return end
+    isEquipping = true
+    local kc = slotKeyCode[selectedSlot]
+    if kc then pressKey(kc) task.wait(0.4) end
+    isEquipping = false
+end
+
+local function startAutoEquip()
+    stopAutoEquip()
+    if not selectedSlot then return end
+    autoEquipEnabled = true
+    autoEquipThread = task.spawn(function()
+        local stroke = nil
+        while autoEquipEnabled do
+            stroke = getSlotStroke()
+            if stroke then break end
+            task.wait(0.5)
+        end
+        if not stroke then return end
+        if isStrokeBlack(stroke) then doEquip() end
+        
+        strokeConn = stroke:GetPropertyChangedSignal("Color"):Connect(function()
+            if not autoEquipEnabled then return end
+            if isStrokeBlack(stroke) then doEquip() end
+        end)
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(2)
+    if autoEquipEnabled then startAutoEquip() end
+end)
+
+-- ========================
+-- Main Boss Farm Engine (Priority 1)
+-- ========================
+local function updateFarmState()
+    local anyBossEnabled = false
+    for _, enabled in pairs(targetBosses) do
+        if enabled then anyBossEnabled = true break end
+    end
+
+    if not anyBossEnabled then
+        farmingEnabled = false
+        isBossActiveNow = false
+        if farmThread then task.cancel(farmThread) farmThread = nil end
+        return
+    end
+
+    if farmingEnabled then return end
+    farmingEnabled = true
+
+    farmThread = task.spawn(function()
+        while farmingEnabled do
+            if trainX4Enabled then
+                task.wait(0.5)
+                continue
+            end
+
+            local hasTarget = false
+            local activeBossCount = 0
+
+            for bossName, enabled in pairs(targetBosses) do
+                if not enabled then continue end
+                activeBossCount = activeBossCount + 1
+                local hrp = getHRP()
+                local bossPos = getBossPosition(bossName)
+                if hrp and bossPos then
+                    isBossActiveNow = true
+                    hrp.CFrame = CFrame.new(bossPos)
+                    hasTarget = true
+                    hasResetThisCycle = false
+                    task.wait(0.2)
+                end
+            end
+
+            if not hasTarget then
+                isBossActiveNow = false
+                if activeBossCount > 0 then
+                    if autoResetEnabled and not hasResetThisCycle then
+                        local char = LocalPlayer.Character
+                        local hum = char and char:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            hasResetThisCycle = true
+                            hum.Health = 0
+                            task.wait(0.5)
+                        end
+                    end
+                    if useSavePosEnabled and savedPosition then
+                        local hrp = getHRP()
+                        if hrp then hrp.CFrame = CFrame.new(savedPosition) task.wait(0.3) end
+                    end
+                    task.wait(0.3)
+                else
+                    task.wait(0.1)
+                end
+            else
+                task.wait(0.1)
+            end
+        end
+    end)
+end
+
+-- ========================
+-- Auto Skill (Main Boss)
+-- ========================
+local function stopAutoSkill()
+    autoSkillEnabled = false
+    if autoSkillThread then task.cancel(autoSkillThread) autoSkillThread = nil end
+end
+
+local function startAutoSkill()
+    stopAutoSkill()
+    autoSkillEnabled = true
+    autoSkillThread = task.spawn(function()
+        while autoSkillEnabled do
+            if trainX4Enabled or autoKuramaEnabled then
+                task.wait(0.3)
+                continue
+            end
+            if checkAnyBossActive() or farmMobEnabled then
+                if isEquipping then task.wait(0.1) continue end
+                local firedAny = false
+                for keyStr, isSelected in pairs(selectedSkills) do
+                    if isSelected and Enum.KeyCode[keyStr] then
+                        firedAny = true
+                        if not isEquipping then
+                            task.spawn(function() pressKey(Enum.KeyCode[keyStr]) end)
+                        end
+                    end
+                end
+                task.wait(firedAny and 0.3 or 0.1)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+-- ========================
+-- Mob Farm Engine (Priority 4)
+-- แก้บัค Auto Mob ไม่ทำงาน:
+--   ต้นเหตุเดิม: Toggle เซ็ต farmMobEnabled ตรง ๆ แล้วค่อยเรียก updateMobFarmState()
+--   แต่ updateMobFarmState() เช็คเงื่อนไข "if not farmMobEnabled then ... return end" ตั้งแต่ต้นฟังก์ชัน
+--   ถ้าค่า flag ยังไม่ทันอัปเดต (เช่นค่าโหลดมาจาก config ก่อน UI พร้อม) หรือถูกเรียกซ้ำสองรอบ
+--   thread เก่าจะถูกอ้างอิงทิ้งไว้ (ไม่ cancel) แล้วเปิด thread ใหม่ซ้อนกัน ทำให้ค่า farmMobThread
+--   ชี้ไปที่ thread ผิดตัว เวลากด Toggle ปิด-เปิดซ้ำ ๆ ระบบจะหลุดสถานะและไม่วาปไปหามอบอีก
+--   วิธีแก้: ทำให้ updateMobFarmState() ปลอดภัยต่อการเรียกซ้ำ (idempotent) โดย stop ของเก่าก่อนเริ่มของใหม่เสมอ
+--   และเพิ่มการเช็ค error ป้องกัน mobName ไม่มีอยู่จริงแล้วเทเลพอร์ตพลาด
+-- ========================
+local function scanClientEntities()
+    local mobsFound = {}
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if clientEntities then
+        for _, child in ipairs(clientEntities:GetChildren()) do
+            if child:IsA("Model") and not table.find(mobsFound, child.Name) and not bossPaths[child.Name] and child.Name ~= "Kurama" and child.Name ~= "CurseKing" then
+                table.insert(mobsFound, child.Name)
+            end
+        end
+    end
+    if #mobsFound == 0 then table.insert(mobsFound, "No Mobs Found") end
+    table.sort(mobsFound)
+    availableMobs = mobsFound
+    return mobsFound
+end
+
+local function getMobModel(mobName)
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    for _, child in ipairs(clientEntities:GetChildren()) do
+        if child.Name == mobName and child:IsA("Model") then
+            return child
+        end
+    end
+    return nil
+end
+
+local function getMobRoot(mobModel)
+    if not mobModel then return nil end
+    local root = mobModel:FindFirstChild("HumanoidRootPart") or mobModel:FindFirstChild("RootPart") or mobModel.PrimaryPart
+    if not root then
+        for _, part in ipairs(mobModel:GetDescendants()) do
+            if part:IsA("BasePart") then root = part break end
+        end
+    end
+    return root
+end
+
+local function getMobPosition(mobName)
+    local mobModel = getMobModel(mobName)
+    local root = getMobRoot(mobModel)
+    return root and root.Position or nil
+end
+
+-- ลอยอยู่บนหัวโมเดลมอบสูง ~2 หน่วย แล้วบังคับให้ตัวละครนอนคว่ำ (PlatformStand + คว่ำหน้าลง) ทับโมเดล
+-- เพื่อให้โดนตีต่อเนื่อง/ฟาร์มมอบอัตโนมัติแบบไม่ขยับหลุดตำแหน่ง
+local MOB_HOVER_HEIGHT = 2
+
+local function applyProneOverMob(hrp, mobPos)
+    if not hrp or not mobPos then return end
+    -- ตำแหน่งลอยเหนือหัวโมเดล 2 หน่วย
+    local hoverPos = mobPos + Vector3.new(0, MOB_HOVER_HEIGHT, 0)
+    -- คว่ำหน้าลงพื้น (หมุนรอบแกน X 90 องศา ให้ตัวละครนอนคว่ำทับโมเดล)
+    hrp.CFrame = CFrame.new(hoverPos) * CFrame.Angles(math.rad(-90), 0, 0)
+
+    local char = getCharacter()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function()
+            hum.PlatformStand = true
+        end)
+    end
+end
+
+local function releaseProneState()
+    local char = getCharacter()
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum.PlatformStand = false end)
+    end
+end
+
+local function updateMobFarmState()
+    -- กันบัค: ปิด thread เก่าทุกครั้งก่อนเริ่มของใหม่ ไม่ให้มี thread ซ้อนกันสองตัว
+    if farmMobThread then
+        pcall(task.cancel, farmMobThread)
+        farmMobThread = nil
+    end
+
+    if not farmMobEnabled then
+        releaseProneState()
+        return
+    end
+
+    farmMobThread = task.spawn(function()
+        while farmMobEnabled do
+            if checkAnyBossActive() or isKuramaInArena or isSukunaInArena or getAnyPendingFruitModel() or trainX4Enabled then
+                releaseProneState()
+                task.wait(0.5)
+                continue
+            end
+
+            local anySelected = false
+            for _, isSelected in pairs(selectedMobs) do
+                if isSelected then anySelected = true break end
+            end
+
+            if not anySelected then
+                releaseProneState()
+                task.wait(0.5)
+                continue
+            end
+
+            local teleportsDone = false
+            for mobName, isSelected in pairs(selectedMobs) do
+                if not farmMobEnabled then break end
+                if isSelected and mobName ~= "No Mobs Found" then
+                    local mobModel = getMobModel(mobName)
+                    local pos = getMobRoot(mobModel) and getMobRoot(mobModel).Position or nil
+                    local hrp = getHRP()
+                    if hrp and pos then
+                        applyProneOverMob(hrp, pos)
+                        teleportsDone = true
+                        task.wait(0.4)
+                    end
+                end
+            end
+
+            if not teleportsDone then
+                releaseProneState()
+                task.wait(0.5)
+            else
+                task.wait(0.1)
+            end
+        end
+        releaseProneState()
+    end)
+end
+
+-- ========================
+-- Kurama Farm Engine (Priority 2)
+-- ========================
+local function getKuramaPosition()
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    local kurama = clientEntities:FindFirstChild("Kurama")
+    if not kurama then return nil end
+    local root = kurama:FindFirstChild("HumanoidRootPart") or kurama:FindFirstChild("RootPart") or kurama.PrimaryPart
+    if not root then
+        for _, part in ipairs(kurama:GetDescendants()) do
+            if part:IsA("BasePart") then root = part break end
+        end
+    end
+    return root and root.CFrame or nil
+end
+
+local function getKuramaModel()
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    return clientEntities:FindFirstChild("Kurama")
+end
+
+local function stopCameraLock()
+    if camLockConn then camLockConn:Disconnect() camLockConn = nil end
+end
+
+local function startCameraLock()
+    stopCameraLock()
+    camLockConn = RunService.RenderStepped:Connect(function()
+        if not isKuramaInArena then return end
+        local kuramaCFrame = getKuramaPosition()
+        local hrp = getHRP()
+        if kuramaCFrame and hrp then
+            local lookCFrame = CFrame.lookAt(hrp.Position, kuramaCFrame.Position)
+            hrp.CFrame = CFrame.new(hrp.Position) * (lookCFrame - lookCFrame.Position)
+            Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, kuramaCFrame.Position)
+        end
+    end)
+end
+
+local function stopMouseClick()
+    if mouseClickThread then task.cancel(mouseClickThread) mouseClickThread = nil end
+end
+
+local function startMouseClick()
+    stopMouseClick()
+    mouseClickThread = task.spawn(function()
+        while isKuramaInArena and autoKuramaEnabled do
+            local kuramaModel = getKuramaModel()
+            if kuramaModel then
+                local kuramaCFrame = getKuramaPosition()
+                if kuramaCFrame then
+                    pcall(function()
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(kuramaCFrame.Position)
+                        if onScreen then
+                            VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                        end
+                    end)
+                end
+            end
+            task.wait(0.15)
+        end
+    end)
+end
+
+local function stopKuramaSkill()
+    kuramaSkillEnabled = false
+    if kuramaSkillThread then task.cancel(kuramaSkillThread) kuramaSkillThread = nil end
+end
+
+local function startKuramaSkill()
+    stopKuramaSkill()
+    kuramaSkillEnabled = true
+    kuramaSkillThread = task.spawn(function()
+        while kuramaSkillEnabled do
+            if isKuramaInArena and getKuramaPosition() then
+                local firedAny = false
+                for keyStr, isSelected in pairs(kuramaSelectedSkills) do
+                    if isSelected and Enum.KeyCode[keyStr] then
+                        firedAny = true
+                        task.spawn(function() pressKey(Enum.KeyCode[keyStr]) end)
+                    end
+                end
+                task.wait(firedAny and 0.3 or 0.1)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+local function stopAutoKurama()
+    autoKuramaEnabled = false
+    isKuramaInArena   = false
+    stopCameraLock()
+    stopMouseClick()
+    stopKuramaSkill()
+    if autoKuramaThread then task.cancel(autoKuramaThread) autoKuramaThread = nil end
+end
+
+local function startAutoKurama()
+    stopAutoKurama()
+    autoKuramaEnabled = true
+    if GetValue("kuramaSkill", false) then startKuramaSkill() end
+
+    autoKuramaThread = task.spawn(function()
+        while autoKuramaEnabled do
+            if checkAnyBossActive() then
+                task.wait(0.5)
+                continue
+            end
+
+            isKuramaInArena = false
+            local hrp = getHRP()
+            local totemOk, totemObj = pcall(function() return workspace.Map.Arenas.Boss.KuramaArena.Totem end)
+
+            if hrp and totemOk and totemObj then
+                local totemPart = nil
+                if totemObj:IsA("BasePart") then totemPart = totemObj else totemPart = totemObj:FindFirstChildWhichIsA("BasePart", true) end
+
+                if totemPart then
+                    hrp.CFrame = CFrame.new(totemPart.Position + Vector3.new(0, 3, 0))
+                    WindUI:Notify({ Title = "Kurama Farm", Content = "Teleported to Totem, triggering...", Duration = 2, Icon = "zap" })
+                    task.wait(1.5)
+                end
+
+                local prompt = findProximityPrompt(totemObj:IsA("BasePart") and totemObj.Parent or totemObj)
+                if not prompt then pressKey(Enum.KeyCode.E) else triggerPrompt(prompt) end
+
+                local waited = 0
+                local foundKurama = false
+                while waited < 20 and autoKuramaEnabled do
+                    if checkAnyBossActive() then break end
+                    if getKuramaPosition() then foundKurama = true break end
+                    task.wait(0.5)
+                    waited = waited + 0.5
+                end
+
+                if checkAnyBossActive() then continue end
+
+                if not foundKurama then
+                    WindUI:Notify({ Title = "Kurama", Content = "Kurama model not found after 20s, retrying...", Duration = 3, Icon = "alert-circle" })
+                    task.wait(1)
+                    continue
+                end
+            else
+                WindUI:Notify({ Title = "Kurama", Content = "Totem not found, retrying...", Duration = 2, Icon = "alert-circle" })
+                task.wait(3)
+                continue
+            end
+        
+            if not autoKuramaEnabled or checkAnyBossActive() then break end
+
+            isKuramaInArena = true
+            startCameraLock()
+            startMouseClick()
+            WindUI:Notify({ Title = "Kurama Farm", Content = "Kurama found! Farming now...", Duration = 3, Icon = "check-circle" })
+
+            local missCount = 0
+            while autoKuramaEnabled do
+                if checkAnyBossActive() then
+                    isKuramaInArena = false
+                    stopCameraLock()
+                    stopMouseClick()
+                    break 
+                end
+
+                local kuramaCFrame = getKuramaPosition()
+                local fightHRP     = getHRP()
+
+                if kuramaCFrame and fightHRP then
+                    missCount = 0
+                    local behindPos = kuramaCFrame * CFrame.new(0, 40, 80)
+                    fightHRP.CFrame = behindPos
+                    task.wait(0.2)
+                else
+                    missCount = missCount + 1
+                    if missCount >= 5 then
+                        WindUI:Notify({ Title = "Kurama", Content = "Kurama model lost, restarting...", Duration = 3, Icon = "refresh-cw" })
+                        break
+                    end
+                    task.wait(0.3)
+                end
+            end
+
+            isKuramaInArena = false
+            stopCameraLock()
+            stopMouseClick()
+            if autoKuramaEnabled then task.wait(2) end
+        end
+    end)
+end
+
+-- ========================
+-- Sukuna Extra Boss Engine
+-- ========================
+local function getCurseKingPosition()
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    local curseKing = clientEntities:FindFirstChild("CurseKing")
+    if not curseKing then return nil end
+    local root = curseKing:FindFirstChild("HumanoidRootPart") or curseKing:FindFirstChild("RootPart") or curseKing.PrimaryPart
+    if not root then
+        for _, part in ipairs(curseKing:GetDescendants()) do
+            if part:IsA("BasePart") then root = part break end
+        end
+    end
+    return root and root.CFrame or nil
+end
+
+local function getCurseKingModel()
+    local clientEntities = workspace:FindFirstChild("ClientEntities")
+    if not clientEntities then return nil end
+    return clientEntities:FindFirstChild("CurseKing")
+end
+
+local function stopSukunaCameraLock()
+    if sukunaCamLockConn then sukunaCamLockConn:Disconnect() sukunaCamLockConn = nil end
+end
+
+local function startSukunaCameraLock()
+    stopSukunaCameraLock()
+    sukunaCamLockConn = RunService.RenderStepped:Connect(function()
+        if not isSukunaInArena then return end
+        local curseKingCFrame = getCurseKingPosition()
+        local hrp = getHRP()
+        if curseKingCFrame and hrp then
+            local lookCFrame = CFrame.lookAt(hrp.Position, curseKingCFrame.Position)
+            hrp.CFrame = CFrame.new(hrp.Position) * (lookCFrame - lookCFrame.Position)
+            Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, curseKingCFrame.Position)
+        end
+    end)
+end
+
+local function stopSukunaMouseClick()
+    if sukunaMouseClickThread then task.cancel(sukunaMouseClickThread) sukunaMouseClickThread = nil end
+end
+
+local function startSukunaMouseClick()
+    stopSukunaMouseClick()
+    sukunaMouseClickThread = task.spawn(function()
+        while isSukunaInArena and autoSukunaEnabled do
+            local curseKingModel = getCurseKingModel()
+            if curseKingModel then
+                local curseKingCFrame = getCurseKingPosition()
+                if curseKingCFrame then
+                    -- ลอยสูง 70 units บนหัว แล้วคลิกรัวๆ
+                    local targetPos = curseKingCFrame.Position + Vector3.new(0, 70, 0)
+                    pcall(function()
+                        local screenPos, onScreen = Camera:WorldToViewportPoint(targetPos)
+                        if onScreen then
+                            VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, true, game, 1)
+                            task.wait(0.05)
+                            VirtualInputManager:SendMouseButtonEvent(screenPos.X, screenPos.Y, 0, false, game, 1)
+                        end
+                    end)
+                end
+            end
+            task.wait(0.15)
+        end
+    end)
+end
+
+local function stopSukunaSkill()
+    sukunaSkillEnabled = false
+    if sukunaSkillThread then task.cancel(sukunaSkillThread) sukunaSkillThread = nil end
+end
+
+local function startSukunaSkill()
+    stopSukunaSkill()
+    sukunaSkillEnabled = true
+    sukunaSkillThread = task.spawn(function()
+        while sukunaSkillEnabled do
+            if isSukunaInArena and getCurseKingPosition() then
+                local firedAny = false
+                for keyStr, isSelected in pairs(sukunaSelectedSkills) do
+                    if isSelected and Enum.KeyCode[keyStr] then
+                        firedAny = true
+                        task.spawn(function() pressKey(Enum.KeyCode[keyStr]) end)
+                    end
+                end
+                task.wait(firedAny and 0.3 or 0.1)
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+local function stopAutoSukuna()
+    autoSukunaEnabled = false
+    isSukunaInArena   = false
+    stopSukunaCameraLock()
+    stopSukunaMouseClick()
+    stopSukunaSkill()
+    if autoSukunaThread then task.cancel(autoSukunaThread) autoSukunaThread = nil end
+end
+
+local function startAutoSukuna()
+    stopAutoSukuna()
+    autoSukunaEnabled = true
+    if GetValue("sukunaSkill", false) then startSukunaSkill() end
+
+    autoSukunaThread = task.spawn(function()
+        while autoSukunaEnabled do
+            if checkAnyBossActive() then
+                task.wait(0.5)
+                continue
+            end
+
+            isSukunaInArena = false
+            local hrp = getHRP()
+            local summonOk, summonObj = pcall(function() return workspace.Map.Arenas.Boss.SukunaArena.Summon end)
+
+            if hrp and summonOk and summonObj then
+                local summonPart = nil
+                if summonObj:IsA("BasePart") then summonPart = summonObj else summonPart = summonObj:FindFirstChildWhichIsA("BasePart", true) end
+
+                if summonPart then
+                    hrp.CFrame = CFrame.new(summonPart.Position + Vector3.new(0, 3, 0))
+                    WindUI:Notify({ Title = "Sukuna Arena", Content = "Teleported to Summon, triggering...", Duration = 2, Icon = "zap" })
+                    task.wait(1.5)
+                end
+
+                local prompt = findProximityPrompt(summonObj:IsA("BasePart") and summonObj.Parent or summonObj)
+                if not prompt then pressKey(Enum.KeyCode.E) else triggerPrompt(prompt) end
+                
+                -- คลิก mouse ที่พิกัด X756 Y296 ตามสูตร responsive scaling
+                task.wait(0.5)
+                local screenSize = UserInputService.GetScreenSize or function() return 1280, 720 end
+                local currentWidth, currentHeight = screenSize()
+                local originalWidth, originalHeight = 1280, 720
+                
+                local xScale = 756 / originalWidth
+                local yScale = 296 / originalHeight
+                local scaledX = currentWidth * xScale
+                local scaledY = currentHeight * yScale
+                
+                pcall(function()
+                    VirtualInputManager:SendMouseButtonEvent(scaledX, scaledY, 0, true, game, 1)
+                    task.wait(0.1)
+                    VirtualInputManager:SendMouseButtonEvent(scaledX, scaledY, 0, false, game, 1)
+                end)
+
+                local waited = 0
+                local foundCurseKing = false
+                while waited < 50 and autoSukunaEnabled do
+                    if checkAnyBossActive() then break end
+                    if getCurseKingPosition() then foundCurseKing = true break end
+                    task.wait(0.5)
+                    waited = waited + 0.5
+                end
+
+                if checkAnyBossActive() then continue end
+
+                if not foundCurseKing then
+                    WindUI:Notify({ Title = "Sukuna", Content = "CurseKing not found after 50s, retrying...", Duration = 3, Icon = "alert-circle" })
+                    task.wait(1)
+                    continue
+                end
+            else
+                WindUI:Notify({ Title = "Sukuna", Content = "Summon not found, retrying...", Duration = 2, Icon = "alert-circle" })
+                task.wait(3)
+                continue
+            end
+        
+            if not autoSukunaEnabled or checkAnyBossActive() then break end
+
+            isSukunaInArena = true
+            startSukunaCameraLock()
+            startSukunaMouseClick()
+            WindUI:Notify({ Title = "Sukuna Arena", Content = "CurseKing found! Farming now...", Duration = 3, Icon = "check-circle" })
+
+            local missCount = 0
+            while autoSukunaEnabled do
+                if checkAnyBossActive() then
+                    isSukunaInArena = false
+                    stopSukunaCameraLock()
+                    stopSukunaMouseClick()
+                    break 
+                end
+
+                local curseKingCFrame = getCurseKingPosition()
+                local fightHRP     = getHRP()
+
+                if curseKingCFrame and fightHRP then
+                    local distance = (curseKingCFrame.Position - fightHRP.Position).Magnitude
+                    if distance > 150 then
+                        fightHRP.CFrame = CFrame.new(curseKingCFrame.Position + Vector3.new(0, 70, 0))
+                    end
+                    missCount = 0
+                else
+                    missCount = missCount + 1
+                    if missCount > 20 then
+                        isSukunaInArena = false
+                        stopSukunaCameraLock()
+                        stopSukunaMouseClick()
+                        break
+                    end
+                end
+                task.wait(0.3)
+            end
+
+            isSukunaInArena = false
+            stopSukunaCameraLock()
+            stopSukunaMouseClick()
+            if autoSukunaEnabled then task.wait(2) end
+        end
+    end)
+end
+
+-- ========================
+-- Server Hop Logic (สแกนหาเฉพาะเซิร์ฟเวอร์อายุ 30 นาทีขึ้นไป)
+-- ========================
+local function fetchServerList(maxPages)
+    local all = {}
+    local cursor = nil
+    for _ = 1, (maxPages or 3) do
+        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100" .. (cursor and ("&cursor=" .. cursor) or "")
+        local ok, raw = pcall(function() return game:HttpGet(url) end)
+        if not ok or not raw then return all, false end
+
+        local ok2, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+        if not ok2 or not decoded or not decoded.data then return all, false end
+
+        for _, server in ipairs(decoded.data) do
+            table.insert(all, server)
+        end
+
+        cursor = decoded.nextPageCursor
+        if not cursor or cursor == "" then break end
+    end
+    return all, true
+end
+
+local function serverHop()
+    WindUI:Notify({ Title = "Server Hop", Content = "กำลังสแกนหาเซิร์ฟเวอร์ที่มีอายุมากกว่า " .. tostring(hopMinAge) .. " นาที...", Duration = 4, Icon = "refresh-cw" })
+
+    local servers, fetchOk = fetchServerList(3)
+
+    if not fetchOk or #servers == 0 then
+        WindUI:Notify({ Title = "Server Hop ล้มเหลว", Content = "ดึงรายชื่อเซิร์ฟเวอร์ไม่สำเร็จ (HTTP/Roblox API มีปัญหา) ลองใหม่อีกครั้ง", Duration = 5, Icon = "alert-triangle" })
+        return
+    end
+
+    -- หมายเหตุ: Roblox Public Servers API ไม่มีค่า "อายุเซิร์ฟเวอร์" ให้ตรง ๆ
+    -- จึงใช้ลำดับ Asc (เก่า -> ใหม่) แล้วข้ามกลุ่มหน้าสุดตามสัดส่วนของ hopMinAge ที่ตั้งไว้
+    -- เพื่อลดโอกาสวาปไปเซิร์ฟเวอร์ที่เพิ่งเปิดใหม่ ๆ
+    local skipRatio = math.clamp((hopMinAge or 30) / 60, 0, 0.85)
+    local skipCount = math.floor(#servers * skipRatio)
+
+    local candidates = {}
+    for i, server in ipairs(servers) do
+        if i > skipCount and server.id ~= game.JobId and server.playing and server.maxPlayers and server.playing < server.maxPlayers then
+            table.insert(candidates, server)
+        end
+    end
+
+    -- กันระบบค้าง ถ้าไม่มีเซิร์ฟเวอร์ผ่านเงื่อนไขอายุ ให้หาเซิร์ฟเวอร์ที่ว่างใดก็ได้แทน
+    if #candidates == 0 then
+        for _, server in ipairs(servers) do
+            if server.id ~= game.JobId and server.playing and server.maxPlayers and server.playing < server.maxPlayers then
+                table.insert(candidates, server)
+            end
+        end
+    end
+
+    if #candidates > 0 then
+        local target = candidates[math.random(1, #candidates)]
+        local teleportOk, teleportErr = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LocalPlayer)
+        end)
+        if not teleportOk then
+            WindUI:Notify({ Title = "Server Hop ล้มเหลว", Content = "Teleport ไม่สำเร็จ: " .. tostring(teleportErr), Duration = 5, Icon = "alert-triangle" })
+        end
+    else
+        WindUI:Notify({ Title = "Server Hop", Content = "ไม่พบเซิร์ฟเวอร์อื่นที่ว่างในขณะนี้ ลองใหม่อีกครั้งภายหลัง", Duration = 4, Icon = "alert-triangle" })
+    end
+end
+
+local function stopAutoHop()
+    autoHopEnabled = false
+    if autoHopThread then
+        pcall(task.cancel, autoHopThread)
+        autoHopThread = nil
+    end
+end
+
+local function startAutoHop()
+    stopAutoHop()
+    autoHopEnabled = true
+    autoHopThread = task.spawn(function()
+        while autoHopEnabled do
+            local ok, err = pcall(serverHop)
+            if not ok then
+                warn("[Divinex] AutoHop error: " .. tostring(err))
+                WindUI:Notify({ Title = "Auto Hop", Content = "เกิดข้อผิดพลาด: " .. tostring(err), Duration = 4, Icon = "alert-triangle" })
+            end
+            if not autoHopEnabled then break end
+            local waitTime = (hopInterval and hopInterval > 0) and (hopInterval * 60) or 600
+            task.wait(waitTime)
+        end
+    end)
+end
+
+-- ========================
+-- Anti AFK System
+-- ========================
+local function stopAntiAfk()
+    antiAfkEnabled = false
+    if antiAfkThread then task.cancel(antiAfkThread) antiAfkThread = nil end
+end
+
+local function startAntiAfk()
+    stopAntiAfk()
+    antiAfkEnabled = true
+    antiAfkThread = task.spawn(function()
+        while antiAfkEnabled do
+            task.wait(240)
+            if not antiAfkEnabled then break end
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end)
+        end
+    end)
+end
+
+LocalPlayer.Idled:Connect(function()
+    if antiAfkEnabled then
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end
+end)
+
+-- ========================
+-- Teleport Zone Helpers
+-- ========================
+local function scanTrainingZones()
+    local zones = {}
+    local ok, trainingFolder = pcall(function() return workspace.Zones.Training end)
+    if ok and trainingFolder then
+        for _, child in ipairs(trainingFolder:GetChildren()) do table.insert(zones, child.Name) end
+    end
+    if #zones == 0 then table.insert(zones, "No Zones Found") end
+    table.sort(zones)
+    availableZones = zones
+    return zones
+end
+
+local function getZonePosition(zoneName)
+    local ok, trainingFolder = pcall(function() return workspace.Zones.Training end)
+    if not ok or not trainingFolder then return nil end
+    local zoneObj = trainingFolder:FindFirstChild(zoneName)
+    if not zoneObj then return nil end
+    if zoneObj:IsA("BasePart") then return zoneObj.Position end
+    local root = zoneObj:FindFirstChild("HumanoidRootPart") or zoneObj:FindFirstChild("RootPart") or (zoneObj.PrimaryPart)
+    if not root then
+        for _, part in ipairs(zoneObj:GetDescendants()) do if part:IsA("BasePart") then root = part break end end
+    end
+    return root and root.Position or nil
+end
+
+-- ========================
+-- Train x4 Clan Point Logic
+-- ========================
+local function stopTrainX4()
+    trainX4Enabled = false
+    lockedTrainPos = nil
+    if trainX4Thread then task.cancel(trainX4Thread) trainX4Thread = nil end
+end
+
+local function startTrainX4()
+    stopTrainX4()
+    local hrp = getHRP()
+    if not hrp then return end
+    lockedTrainPos = hrp.CFrame
+    trainX4Enabled = true
+    pressKey(Enum.KeyCode.Four)
+    trainX4Thread = task.spawn(function()
+        local char = LocalPlayer.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        while trainX4Enabled do
+            local curHRP = getHRP()
+            if curHRP and lockedTrainPos then curHRP.CFrame = lockedTrainPos end
+            pressKey(Enum.KeyCode.W)
+            task.wait(0.1)
+            if hum then hum.Jump = true else pressKey(Enum.KeyCode.Space) end
+            task.wait(0.4)
+        end
+    end)
+end
+
+-- ========================
+-- Window Tabs Setup
+-- หมายเลขหมวดหมู่ใส่ไว้ในชื่อแท็บตามคำสั่ง (1., 2., 3., ...) และจัดเรียงปุ่ม/หมวดหมู่ภายในแต่ละแท็บใหม่
+-- ให้เป็นระเบียบด้วย Section คั่นชัดเจน โดยไม่ลบฟังก์ชันเดิมออกแม้แต่ตัวเดียว
+-- ========================
+local MainTab     = Window:Tab({ Title = "1. Main Boss",         Icon = "crosshair"   })
+local KuramaTab   = Window:Tab({ Title = "2. Extra Boss Farm",   Icon = "flame"       })
+local FruitTab    = Window:Tab({ Title = "3. Auto Grab Fruit",   Icon = "cherry"      })
+local MobTab      = Window:Tab({ Title = "4. Mob Farm",          Icon = "skull"       })
+local SkillTab    = Window:Tab({ Title = "5. Auto Skill",        Icon = "zap"         })
+local TrainTab    = Window:Tab({ Title = "6. Train x4",          Icon = "dumbbell"    })
+local TeleportTab = Window:Tab({ Title = "7. Teleport",          Icon = "map-pin"     })
+local PriorityTab = Window:Tab({ Title = "8. Priority",          Icon = "list-ordered"})
+local OtherTab    = Window:Tab({ Title = "9. Other",             Icon = "plus-circle" })
+
+-- ========================
+-- 1. Main Boss Tab
+-- ========================
+MainTab:Section({ Title = "1.1 Auto Boss Targets", Icon = "crosshair" })
+MainTab:Toggle({
+    Title = "Auto Great Ape", Icon = "zap", Flag = "boss_GreatApe",
+    Callback = function(state) targetBosses["Great Ape"] = state updateFarmState() SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Armored Titan", Icon = "zap", Flag = "boss_ArmoredTitan",
+    Callback = function(state) targetBosses["Armored Titan"] = state updateFarmState() SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Crocodile", Icon = "zap", Flag = "boss_Crocodile",
+    Callback = function(state) targetBosses["Crocodile"] = state updateFarmState() SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Puya", Icon = "flame", Flag = "boss_Puya",
+    Callback = function(state) targetBosses["Puya"] = state updateFarmState() SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Special Grade", Icon = "star", Flag = "boss_SpecialGrade",
+    Callback = function(state) targetBosses["SpecialGrade"] = state updateFarmState() SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Igros", Icon = "skull", Flag = "boss_Igros", Desc = "workspace.ClientEntities.Igros",
+    Callback = function(state) targetBosses["Igros"] = state updateFarmState() SaveCurrentConfig() end,
+})
+
+MainTab:Divider()
+MainTab:Section({ Title = "1.2 Position Tools", Icon = "map-pin" })
+MainTab:Button({
+    Title = "Save Position", Icon = "map-pin",
+    Callback = function()
+        local hrp = getHRP()
+        if hrp then
+            savedPosition = hrp.Position
+            WindUI:Notify({ Title = "Position Saved", Content = ("X: %.1f | Y: %.1f | Z: %.1f"):format(savedPosition.X, savedPosition.Y, savedPosition.Z), Duration = 4, Icon = "map-pin" })
+        end
+    end,
+})
+MainTab:Toggle({
+    Title = "Use Save Position", Icon = "refresh-cw", Flag = "useSavePos",
+    Callback = function(state) useSavePosEnabled = state SaveCurrentConfig() end,
+})
+
+MainTab:Divider()
+MainTab:Section({ Title = "1.3 Equip Settings", Icon = "shield" })
+MainTab:Dropdown({
+    Title = "Select Equip Slot", Icon = "hash", Values = { "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5" }, Flag = "equipSlot",
+    Callback = function(selected) selectedSlot = tonumber(selected:match("%d")) or 1 if autoEquipEnabled then startAutoEquip() end SaveCurrentConfig() end,
+})
+MainTab:Toggle({
+    Title = "Auto Equip", Icon = "shield", Flag = "autoEquip",
+    Callback = function(state) if state then startAutoEquip() else stopAutoEquip() end SaveCurrentConfig() end,
+})
+
+-- ========================
+-- 2. Extra Boss Farm Tab (Kurama + Sukuna)
+-- ========================
+KuramaTab:Section({ Title = "2.1 Kurama Arena Farm", Icon = "flame" })
+KuramaTab:Toggle({
+    Title = "Start Auto Kurama", Icon = "play", Flag = "enableKurama",
+    Callback = function(state) if state then startAutoKurama() else stopAutoKurama() end SaveCurrentConfig() end,
+})
+local alphabet = {"A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"}
+KuramaTab:Dropdown({
+    Title = "Kurama Skills to Spam", Icon = "keyboard", Multi = true, Values = alphabet, Flag = "kuramaSelectedSkills",
+    Callback = function(selectedList)
+        local newSkills = {}
+        if type(selectedList) == "table" then
+            for _, k in pairs(selectedList) do newSkills[k] = true end
+        elseif type(selectedList) == "string" then
+            newSkills[selectedList] = true
+        end
+        kuramaSelectedSkills = newSkills
+        SaveCurrentConfig()
+    end,
+})
+KuramaTab:Toggle({
+    Title = "Auto Skill Kurama", Icon = "zap", Flag = "kuramaSkill",
+    Callback = function(state) if state then startKuramaSkill() else stopKuramaSkill() end SaveCurrentConfig() end,
+})
+
+KuramaTab:Divider()
+KuramaTab:Section({ Title = "2.2 Sukuna Arena Farm", Icon = "flame" })
+KuramaTab:Toggle({
+    Title = "Start Auto Sukuna", Icon = "play", Flag = "enableSukuna",
+    Callback = function(state) if state then startAutoSukuna() else stopAutoSukuna() end SaveCurrentConfig() end,
+})
+KuramaTab:Dropdown({
+    Title = "Sukuna Skills to Spam", Icon = "keyboard", Multi = true, Values = alphabet, Flag = "sukunaSelectedSkills",
+    Callback = function(selectedList)
+        local newSkills = {}
+        if type(selectedList) == "table" then
+            for _, k in pairs(selectedList) do newSkills[k] = true end
+        elseif type(selectedList) == "string" then
+            newSkills[selectedList] = true
+        end
+        sukunaSelectedSkills = newSkills
+        SaveCurrentConfig()
+    end,
+})
+KuramaTab:Toggle({
+    Title = "Auto Skill (for Sukuna)", Icon = "zap", Flag = "sukunaSkill",
+    Callback = function(state) if state then startSukunaSkill() else stopSukunaSkill() end SaveCurrentConfig() end,
+})
+
+-- ========================
+-- 3. Auto Grab Fruit Tab
+-- ========================
+FruitTab:Section({ Title = "3.1 Select Fruits to Grab", Icon = "cherry" })
+for i, fruit in ipairs(fruitTargets) do
+    FruitTab:Toggle({
+        Title = fruit.name, Icon = "circle", Flag = "fruit_" .. fruit.name,
+        Callback = function(state) fruitTargets[i].enabled = state SaveCurrentConfig() end,
+    })
+end
+FruitTab:Divider()
+FruitTab:Section({ Title = "3.2 Start", Icon = "play" })
+FruitTab:Toggle({
+    Title = "Start Auto Grab", Icon = "play", Flag = "autoGrab",
+    Callback = function(state) if state then startAutoGrab() else stopAutoGrab() end SaveCurrentConfig() end,
+})
+
+-- ========================
+-- 4. Mob Farm Tab
+-- ========================
+MobTab:Section({ Title = "4.1 Monster Farming System", Icon = "skull" })
+scanClientEntities()
+mobDropdown = MobTab:Dropdown({
+    Title = "Select Mobs to Farm", Icon = "ghost", Multi = true, Values = availableMobs, Flag = "selectedMobsFlag",
+    Callback = function(selectedList)
+        selectedMobs = {}
+        if type(selectedList) == "table" then
+            for _, mName in pairs(selectedList) do selectedMobs[mName] = true end
+        elseif type(selectedList) == "string" then
+            selectedMobs[selectedList] = true
+        end
+        SaveCurrentConfig()
+    end,
+})
+MobTab:Button({
+    Title = "Refresh Mob List", Icon = "refresh-cw",
+    Callback = function()
+        local newMobs = scanClientEntities()
+        if mobDropdown and (mobDropdown.Refresh or mobDropdown.SetValues) then
+            pcall(function() if mobDropdown.Refresh then mobDropdown:Refresh(newMobs) else mobDropdown:SetValues(newMobs) end end)
+            WindUI:Notify({ Title = "Mob List Refreshed", Content = "Found " .. #newMobs .. " types.", Duration = 3, Icon = "check-circle" })
+        end
+    end,
+})
+MobTab:Divider()
+MobTab:Section({ Title = "4.2 Start", Icon = "play" })
+MobTab:Toggle({
+    Title = "Start Farm Mob", Icon = "play", Flag = "enableMobFarm",
+    Callback = function(state)
+        farmMobEnabled = state
+        updateMobFarmState() -- เรียกตรงทุกครั้ง (ทั้ง true/false) เพื่อกันบัค thread ค้าง/ซ้อนตามที่แก้ไว้ด้านบน
+        SaveCurrentConfig()
+    end,
+})
+
+-- ========================
+-- 5. Auto Skill Tab
+-- ========================
+SkillTab:Section({ Title = "5.1 Main Boss Skills", Icon = "zap" })
+SkillTab:Dropdown({
+    Title = "Select Main Skills", Icon = "keyboard", Multi = true, Values = alphabet, Flag = "selectedSkills",
+    Callback = function(selectedList)
+        local newSkills = {}
+        if type(selectedList) == "table" then
+            for _, k in pairs(selectedList) do newSkills[k] = true end
+        elseif type(selectedList) == "string" then
+            newSkills[selectedList] = true
+        end
+        selectedSkills = newSkills
+        SaveCurrentConfig()
+    end,
+})
+SkillTab:Toggle({
+    Title = "Enable Auto Skill", Icon = "zap", Flag = "autoSkill",
+    Callback = function(state) if state then startAutoSkill() else stopAutoSkill() end SaveCurrentConfig() end,
+})
+
+-- ========================
+-- 6. Train x4 Tab
+-- ========================
+TrainTab:Section({ Title = "6.1 Clan Point Training", Icon = "dumbbell" })
+TrainTab:Toggle({
+    Title = "Auto Train x4 Clan Point", Icon = "dumbbell", Flag = "trainX4",
+    Callback = function(state) if state then startTrainX4() else stopTrainX4() end SaveCurrentConfig() end,
+})
+
+-- ========================
+-- 7. Teleport Tab
+-- ========================
+TeleportTab:Section({ Title = "7.1 Training Zone Teleport", Icon = "map" })
+scanTrainingZones()
+zoneDropdown = TeleportTab:Dropdown({
+    Title = "Select Zone", Icon = "map", Values = availableZones, Flag = "teleportZone",
+    Callback = function(selected) selectedZone = selected SaveCurrentConfig() end,
+})
+TeleportTab:Button({
+    Title = "Refresh Zone List", Icon = "refresh-cw",
+    Callback = function()
+        local newZones = scanTrainingZones()
+        pcall(function() if zoneDropdown.Refresh then zoneDropdown:Refresh(newZones) else zoneDropdown:SetValues(newZones) end end)
+    end,
+})
+TeleportTab:Button({
+    Title = "Go to Zone", Icon = "zap",
+    Callback = function()
+        if not selectedZone then return end
+        local pos = getZonePosition(selectedZone)
+        local hrp = getHRP()
+        if hrp and pos then hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end
+    end,
+})
+
+TeleportTab:Divider()
+TeleportTab:Section({ Title = "7.2 Go to NPC (from Quests)", Icon = "users" })
+availableNpcs = scanNpcsFromQuests()
+npcDropdown = TeleportTab:Dropdown({
+    Title = "Select NPC", Icon = "users", Values = availableNpcs, Flag = "selectedNpc",
+    Callback = function(selected) selectedNpc = selected SaveCurrentConfig() end,
+})
+TeleportTab:Button({
+    Title = "Refresh NPC List", Icon = "refresh-cw",
+    Callback = function()
+        local newNpcs = scanNpcsFromQuests()
+        availableNpcs = newNpcs
+        pcall(function() if npcDropdown.Refresh then npcDropdown:Refresh(newNpcs) else npcDropdown:SetValues(newNpcs) end end)
+        WindUI:Notify({ Title = "NPC List Refreshed", Content = "Found " .. #newNpcs .. " NPCs", Duration = 3, Icon = "check-circle" })
+    end,
+})
+TeleportTab:Button({
+    Title = "Go to NPC", Icon = "map-pin",
+    Callback = function()
+        if not selectedNpc or selectedNpc == "" then
+            WindUI:Notify({ Title = "Go to NPC", Content = "Please select an NPC first!", Duration = 3, Icon = "alert-circle" })
+            return
+        end
+        goToNpc(selectedNpc)
+    end,
+})
+
+-- ========================
+-- 8. Priority Tab (เลือกว่าฟังก์ชันไหนทำงานก่อน/หลัง จัดเรียงเองได้ตามหมายเลขหมวดหมู่)
+-- ========================
+PriorityTab:Section({ Title = "8.1 What is Priority?", Icon = "info" })
+PriorityTab:Paragraph({
+    Title = "วิธีใช้งาน",
+    Desc  = "เลือกได้หลายระบบพร้อมกัน แล้วใช้ปุ่ม ขึ้น/ลง เพื่อจัดลำดับว่าระบบไหนควรได้สิทธิ์ทำงาน(วาป/ยิงสกิล) ก่อนระบบอื่นเมื่อเกิดการชนกันในเฟรมเดียวกัน ลำดับที่ 1 = ทำงานก่อนสุด",
+})
+
+PriorityTab:Divider()
+PriorityTab:Section({ Title = "8.2 Current Order", Icon = "list-ordered" })
+priorityParagraph = PriorityTab:Paragraph({
+    Title = "ลำดับปัจจุบัน (1 = ก่อนสุด)",
+    Desc  = priorityListText,
+})
+
+PriorityTab:Divider()
+PriorityTab:Section({ Title = "8.3 Select & Reorder", Icon = "move" })
+
+-- Multi-select dropdown: เลือกว่าระบบไหน "เปิดใช้สิทธิ์ priority" บ้าง (ใช้เพื่อเก็บ flag config เฉย ๆ
+-- การันตีว่าเลือกได้หลายอันตามคำสั่ง โดยไม่ลบของเดิม priorityOrder ทำหน้าที่ตัดสินอันดับจริงเสมอ)
+local selectedPriorityItems = {}
+local selectedPriorityMoveTarget = priorityOrder[1]
+PriorityTab:Dropdown({
+    Title = "Select Systems to Prioritize", Icon = "list-ordered", Multi = true, Values = priorityOrder, Flag = "prioritySelected",
+    Callback = function(selectedList)
+        selectedPriorityItems = {}
+        if type(selectedList) == "table" then
+            for _, name in pairs(selectedList) do selectedPriorityItems[name] = true end
+        elseif type(selectedList) == "string" then
+            selectedPriorityItems[selectedList] = true
+        end
+        SaveCurrentConfig()
+    end,
+})
+
+PriorityTab:Dropdown({
+    Title = "Move Item", Icon = "move", Values = priorityOrder, Flag = "priorityMoveTarget",
+    Callback = function(selected) selectedPriorityMoveTarget = selected end,
+})
+
+PriorityTab:Button({
+    Title = "Move Up ⬆️", Icon = "arrow-up",
+    Callback = function()
+        if selectedPriorityMoveTarget then movePriority(selectedPriorityMoveTarget, -1) end
+    end,
+})
+PriorityTab:Button({
+    Title = "Move Down ⬇️", Icon = "arrow-down",
+    Callback = function()
+        if selectedPriorityMoveTarget then movePriority(selectedPriorityMoveTarget, 1) end
+    end,
+})
+PriorityTab:Button({
+    Title = "Reset to Default Order", Icon = "rotate-ccw",
+    Callback = function()
+        priorityOrder = {
+            "1. Main Boss",
+            "2. Extra Boss (Kurama/Sukuna)",
+            "3. Auto Grab Fruit",
+            "4. Mob Farm",
+            "5. Auto Skill",
+            "6. Train x4",
+        }
+        RefreshPriorityParagraph()
+        savePriorityOrderToFile()
+        WindUI:Notify({ Title = "Priority", Content = "รีเซ็ตลำดับเรียบร้อย", Duration = 3, Icon = "check" })
+    end,
+})
+
+-- ========================
+-- 9. Other Tab
+-- ========================
+OtherTab:Section({ Title = "9.1 Safety & Utility", Icon = "shield-alert" })
+OtherTab:Toggle({
+    Title = "Auto Reset If No Boss", Icon = "refresh-cw", Flag = "autoReset",
+    Callback = function(state) autoResetEnabled = state SaveCurrentConfig() end,
+})
+OtherTab:Toggle({
+    Title = "Anti AFK (Jump every 4 Min)", Icon = "shield-alert", Flag = "antiAfk",
+    Callback = function(state) if state then startAntiAfk() else stopAntiAfk() end SaveCurrentConfig() end,
+})
+
+OtherTab:Divider()
+OtherTab:Section({ Title = "9.2 Server Hop", Icon = "refresh-cw" })
+-- ย้าย Toggle/ปุ่มของ Auto Server Hop มาไว้ "ก่อน" Slider
+-- (กันไม่ให้ถ้า Slider render พัง แล้วลากองค์ประกอบที่ตามมาในโค้ดให้ไม่ขึ้นไปด้วย)
+OtherTab:Toggle({
+    Title = "Auto Server Hop", Icon = "refresh-cw", Flag = "autoHop",
+    Callback = function(state) if state then startAutoHop() else stopAutoHop() end SaveCurrentConfig() end,
+})
+OtherTab:Button({ Title = "Server Hop Now", Icon = "zap", Callback = serverHop })
+
+-- Slider แยกห่อด้วย pcall กันพังลากตัวอื่นที่อยู่หลังมัน ถ้า Slider render ไม่ได้ จะใช้ Input ตัวเลขแทน
+local sliderOk = pcall(function()
+    OtherTab:Slider({
+        Title = "Server Hop Interval (Min)", Icon = "clock", Value = { Min = 1, Max = 60, Default = 10 }, Step = 1, Flag = "hopInterval",
+        Callback = function(value) hopInterval = tonumber(value) or 10 SaveCurrentConfig() end,
+    })
+end)
+if not sliderOk then
+    warn("[Divinex] Slider 'Server Hop Interval' render ไม่สำเร็จ ใช้ช่องกรอกตัวเลขแทน")
+    pcall(function()
+        OtherTab:Input({
+            Title = "Server Hop Interval (Min)", Icon = "clock", Value = "10", Flag = "hopIntervalInput",
+            Callback = function(value)
+                hopInterval = tonumber(value) or 10
+                SaveCurrentConfig()
+            end,
+        })
+    end)
+end
+
+OtherTab:Divider()
+OtherTab:Section({ Title = "9.3 Community", Icon = "message-square" })
+OtherTab:Button({
+    Title = "Copy Discord Link", Icon = "message-square",
+    Callback = function()
+        if setclipboard then setclipboard(discordLink) WindUI:Notify({ Title = "Copied!", Content = "Discord link copied to clipboard", Duration = 3, Icon = "check" }) end
+    end,
+})
+
+OtherTab:Divider()
+OtherTab:Section({ Title = "9.4 Config", Icon = "save" })
+OtherTab:Button({
+    Title = "Save Config Now", Icon = "save",
+    Callback = function()
+        SaveCurrentConfig()
+        WindUI:Notify({ Title = "Config Saved", Content = "บันทึกการตั้งค่าเรียบร้อยแล้ว", Duration = 3, Icon = "check" })
+    end,
+})
+
+-- ========================
+-- Float Button / Toggle Menu
+-- ========================
+local coreGui = game:GetService("CoreGui")
+for _, child in ipairs(coreGui:GetChildren()) do
+    if child.Name == "DivinexFloatBtn" and child:IsA("ScreenGui") then child:Destroy() end
+    if child.Name == "MonHubFloatBtn" and child:IsA("ScreenGui") then child:Destroy() end
+end
+
+local FloatGui = Instance.new("ScreenGui")
+FloatGui.Name = "DivinexFloatBtn"
+FloatGui.Parent = coreGui
+FloatGui.ResetOnSpawn = false
+
+local FloatBtn = Instance.new("ImageButton")
+FloatBtn.Name = "FloatBtn"
+FloatBtn.Parent = FloatGui
+FloatBtn.Size = UDim2.fromOffset(50, 50)
+FloatBtn.Position = UDim2.new(0.05, 0, 0.2, 0)
+FloatBtn.BackgroundColor3 = Color3.fromRGB(255, 250, 235) -- ขาวอมเหลืองให้เข้าธีม
+FloatBtn.Image = "rbxassetid://89414343155030"
+FloatBtn.BackgroundTransparency = 0.1
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0.5, 0)
+UICorner.Parent = FloatBtn
+
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(255, 196, 0) -- เหลืองทองให้เข้าธีม Divinex
+UIStroke.Thickness = 2
+UIStroke.Parent = FloatBtn
+
+local dragging, dragInput, dragStart, startPos
+FloatBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = FloatBtn.Position
+        input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+    end
+end)
+FloatBtn.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then dragInput = input end end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+        FloatBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+FloatBtn.MouseButton1Click:Connect(function()
+    pcall(function()
+        if Window.Toggle then Window:Toggle()
+        elseif Window.Show then Window:Show() end
+    end)
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            local currentUiVisible = false
+            for _, gui in ipairs(coreGui:GetChildren()) do
+                if gui.Name == "WindUI" and gui:IsA("ScreenGui") then currentUiVisible = gui.Enabled break end
+            end
+            FloatBtn.Visible = not currentUiVisible
+        end)
+    end
+end)
+
+-- ========================
+-- Auto Save Load Trigger (WindUI ConfigManager)
+-- โหลดค่าทุกอย่างกลับมาให้ครบ รวมหมวดที่เพิ่มใหม่ (Igros / Sukuna / Priority / Mob / Zone / NPC / Train x4)
+-- ========================
+task.spawn(function()
+    task.wait(1.5)
+    pcall(function()
+        ConfigManager:Load("default")
+        task.wait(0.5)
+
+        -- 1. Main Boss
+        targetBosses["Great Ape"]     = GetValue("boss_GreatApe", false)
+        targetBosses["Armored Titan"] = GetValue("boss_ArmoredTitan", false)
+        targetBosses["Crocodile"]     = GetValue("boss_Crocodile", false)
+        targetBosses["Puya"]          = GetValue("boss_Puya", false)
+        targetBosses["SpecialGrade"]  = GetValue("boss_SpecialGrade", false)
+        targetBosses["Igros"]         = GetValue("boss_Igros", false)
+        useSavePosEnabled = GetValue("useSavePos", false)
+        autoResetEnabled  = GetValue("autoReset", false)
+        updateFarmState()
+
+        local loadedSlot = GetValue("equipSlot", "Slot 1")
+        selectedSlot = tonumber(loadedSlot:match("%d")) or 1
+        if GetValue("autoEquip", false) then startAutoEquip() end
+
+        -- 2. Extra Boss Farm (Kurama + Sukuna)
+        local loadedSkills = GetValue("selectedSkills", {})
+        local newSkills = {}
+        if type(loadedSkills) == "table" then for _, k in pairs(loadedSkills) do newSkills[k] = true end
+        elseif type(loadedSkills) == "string" then newSkills[loadedSkills] = true end
+        selectedSkills = newSkills
+        if GetValue("autoSkill", false) then startAutoSkill() end
+
+        local loadedKuramaSkills = GetValue("kuramaSelectedSkills", {})
+        local newKuramaSkills = {}
+        if type(loadedKuramaSkills) == "table" then for _, k in pairs(loadedKuramaSkills) do newKuramaSkills[k] = true end
+        elseif type(loadedKuramaSkills) == "string" then newKuramaSkills[loadedKuramaSkills] = true end
+        kuramaSelectedSkills = newKuramaSkills
+
+        local loadedSukunaSkills = GetValue("sukunaSelectedSkills", {})
+        local newSukunaSkills = {}
+        if type(loadedSukunaSkills) == "table" then for _, k in pairs(loadedSukunaSkills) do newSukunaSkills[k] = true end
+        elseif type(loadedSukunaSkills) == "string" then newSukunaSkills[loadedSukunaSkills] = true end
+        sukunaSelectedSkills = newSukunaSkills
+
+        autoKuramaEnabled = GetValue("enableKurama", false)
+        if autoKuramaEnabled then startAutoKurama() end
+
+        autoSukunaEnabled = GetValue("enableSukuna", false)
+        if autoSukunaEnabled then startAutoSukuna() end
+
+        -- 3. Fruit
+        for i, fruit in ipairs(fruitTargets) do fruitTargets[i].enabled = GetValue("fruit_" .. fruit.name, false) end
+        if GetValue("autoGrab", false) then startAutoGrab() end
+
+        -- 4. Mob Farm
+        local loadedMobs = GetValue("selectedMobsFlag", {})
+        local newMobs = {}
+        if type(loadedMobs) == "table" then for _, m in pairs(loadedMobs) do newMobs[m] = true end
+        elseif type(loadedMobs) == "string" then newMobs[loadedMobs] = true end
+        selectedMobs = newMobs
+
+        farmMobEnabled = GetValue("enableMobFarm", false)
+        updateMobFarmState()
+
+        -- 6. Train x4 (ไม่ auto-start เพื่อความปลอดภัยเรื่อง CFrame lock ตอนเข้าเกมใหม่ ๆ แต่คง flag ไว้)
+        -- หมายเหตุ: ผู้ใช้สามารถกดเปิดเองได้ทันทีหลังโหลดฉาก
+
+        -- 7. Teleport (Zone / NPC selection)
+        local loadedZone = GetValue("teleportZone", nil)
+        if loadedZone and loadedZone ~= "" then selectedZone = loadedZone end
+        local loadedNpc = GetValue("selectedNpc", nil)
+        if loadedNpc and loadedNpc ~= "" then selectedNpc = loadedNpc end
+
+        -- 8. Priority order
+        -- (โหลดจากไฟล์ priority_order.json ของตัวเองไปแล้วตั้งแต่ตอนสคริปต์เริ่มทำงาน ผ่าน loadPriorityOrderFromFile())
+
+        -- 9. Other (AntiAfk / Hop)
+        if GetValue("antiAfk", true) then startAntiAfk() end
+        local loadedInterval = GetValue("hopInterval", 10)
+        hopInterval = tonumber(loadedInterval) or 10
+        if GetValue("autoHop", false) then startAutoHop() end
+    end)
+end)
+
+-- เก็บลำดับ priority ปัจจุบันลงไฟล์ของตัวเอง (ไม่พึ่ง API ที่ไม่มีอยู่จริงใน WindUI)
+-- ใช้ writefile/readfile ของตัว executor โดยตรง ปลอดภัยกว่าและทำงานได้แน่นอนกว่า
+local PRIORITY_FILE = "DivinexConfigs/priority_order.json"
+
+savePriorityOrderToFile = function()
+    pcall(function()
+        if writefile then
+            if makefolder and not isfolder("DivinexConfigs") then makefolder("DivinexConfigs") end
+            writefile(PRIORITY_FILE, HttpService:JSONEncode(priorityOrder))
+        end
+    end)
+end
+
+local function loadPriorityOrderFromFile()
+    local ok, result = pcall(function()
+        if readfile and isfile and isfile(PRIORITY_FILE) then
+            local raw = readfile(PRIORITY_FILE)
+            local decoded = HttpService:JSONDecode(raw)
+            if type(decoded) == "table" and #decoded == #priorityOrder then
+                return decoded
+            end
+        end
+        return nil
+    end)
+    if ok and result then
+        priorityOrder = result
+        RefreshPriorityParagraph()
+    end
+end
+
+loadPriorityOrderFromFile()
+
+task.spawn(function()
+    while true do
+        task.wait(5)
+        savePriorityOrderToFile()
+    end
+end)
+
+-- ========================
+-- Ready Notify
+-- ========================
+WindUI:Notify({
+    Title    = "Divinex | V.1 AFS:OG ✅",
+    Content  = "Script is Ready!",
+    Duration = 5,
+    Icon     = "check",
+})
