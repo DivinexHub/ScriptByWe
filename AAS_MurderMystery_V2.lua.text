@@ -1,0 +1,743 @@
+-- ================================
+-- AAS : Murder Mystery Detector
+-- WindUI Library — V2
+-- ================================
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- ========================
+-- Services
+-- ========================
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer      = Players.LocalPlayer
+local Camera           = workspace.CurrentCamera
+
+-- ========================
+-- Theme
+-- ========================
+local AASTheme = {
+    Name        = "AASTheme",
+    Accent      = Color3.fromHex("#FF4444"),
+    Background  = Color3.fromHex("#0D0D0D"),
+    Outline     = Color3.fromHex("#2A2A2A"),
+    Text        = Color3.fromHex("#FFFFFF"),
+    Placeholder = Color3.fromHex("#888888"),
+    Button      = Color3.fromHex("#1A1A1A"),
+    Icon        = Color3.fromHex("#FF4444"),
+}
+pcall(function() WindUI:AddTheme(AASTheme) end)
+
+-- ========================
+-- Window
+-- ========================
+local Window = WindUI:CreateWindow({
+    Title  = "AAS : Murder Mystery Detector",
+    Icon   = "shield-alert",
+    Author = "AAS",
+    Folder = "AASConfigs",
+    Save   = true,
+    Size   = UDim2.fromOffset(440, 540),
+    Theme  = "AASTheme",
+})
+pcall(function() WindUI:SetTheme("AASTheme") end)
+
+-- ========================
+-- Config Manager
+-- ========================
+local ConfigManager
+do
+    local ok, cm = pcall(function() return Window.ConfigManager end)
+    ConfigManager = (ok and cm) or { Save = function() end, Load = function() end }
+end
+
+local function SaveConfig()
+    pcall(function() ConfigManager:Save("default") end)
+end
+
+local function GetValue(flag, default)
+    local ok, v = pcall(function() return Window:GetFlag(flag) end)
+    return (ok and v ~= nil) and v or default
+end
+
+-- Auto-save every 20s
+task.spawn(function()
+    while true do task.wait(20) SaveConfig() end
+end)
+
+-- ========================
+-- State
+-- ========================
+local espEnabled        = false
+local roleDetectEnabled = false
+local noclipEnabled     = false
+local gunDropEnabled    = false
+local lookingEnabled    = false
+local roundActive       = false
+
+local espConnections    = {}
+local espHighlights     = {}
+local roleLabels        = {}
+local gunDropLabels     = {} -- [model] = BillboardGui
+
+local latchedMurderer  = nil
+local latchedSheriff   = nil
+
+local roleThread       = nil
+local espThread        = nil
+local noclipThread     = nil
+local gunDropThread    = nil
+local lookingConn      = nil
+
+local murderPara  = nil
+local sheriffPara = nil
+
+local lastWeaponSeenTick = 0
+local ROUND_END_GRACE    = 8
+
+-- ========================
+-- GUI Containers
+-- ========================
+local coreGui = game:GetService("CoreGui")
+
+local espGui = Instance.new("ScreenGui")
+espGui.Name = "AAS_ESP"
+espGui.ResetOnSpawn = false
+pcall(function() espGui.Parent = coreGui end)
+
+local labelGui = Instance.new("ScreenGui")
+labelGui.Name = "AAS_RoleLabels"
+labelGui.ResetOnSpawn = false
+pcall(function() labelGui.Parent = coreGui end)
+
+local gunDropGui = Instance.new("ScreenGui")
+gunDropGui.Name = "AAS_GunDrop"
+gunDropGui.ResetOnSpawn = false
+pcall(function() gunDropGui.Parent = coreGui end)
+
+-- ========================
+-- Helpers
+-- ========================
+local function getHead(player)
+    local char = player and player.Character
+    return char and char:FindFirstChild("Head")
+end
+
+local function updateStatusParagraphs()
+    pcall(function()
+        if murderPara then
+            murderPara:SetDesc(latchedMurderer and ("⚠ " .. latchedMurderer) or "Not detected yet")
+        end
+        if sheriffPara then
+            sheriffPara:SetDesc(latchedSheriff and ("🔵 " .. latchedSheriff) or "Not detected yet")
+        end
+    end)
+end
+
+-- ========================
+-- Role Label System
+-- ========================
+local function removeRoleLabel(playerName)
+    if roleLabels[playerName] then
+        pcall(function() roleLabels[playerName]:Destroy() end)
+        roleLabels[playerName] = nil
+    end
+end
+
+local function setRoleLabel(player, roleType)
+    if not player then return end
+    local head = getHead(player)
+    if not head then
+        task.spawn(function()
+            task.wait(1.5)
+            if player then setRoleLabel(player, roleType) end
+        end)
+        return
+    end
+
+    removeRoleLabel(player.Name)
+    if not roleType then return end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name        = "AAS_Role_" .. player.Name
+    bb.Size        = UDim2.fromOffset(160, 50)
+    bb.StudsOffset = Vector3.new(0, 3.5, 0)
+    bb.AlwaysOnTop = true
+    bb.Adornee     = head
+    bb.Parent      = labelGui
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                   = UDim2.fromScale(1, 1)
+    lbl.BackgroundTransparency = 1
+    lbl.TextScaled             = true
+    lbl.Font                   = Enum.Font.GothamBold
+    lbl.TextStrokeTransparency = 0
+    lbl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+    lbl.Text       = roleType == "murder" and "⚠ MURDER" or "🔵 SHERIFF"
+    lbl.TextColor3 = roleType == "murder"
+        and Color3.fromRGB(255, 30, 30)
+        or  Color3.fromRGB(50, 140, 255)
+    lbl.Parent = bb
+    roleLabels[player.Name] = bb
+end
+
+local function clearAllRoleLabels()
+    for name in pairs(roleLabels) do removeRoleLabel(name) end
+    roleLabels        = {}
+    latchedMurderer   = nil
+    latchedSheriff    = nil
+    updateStatusParagraphs()
+end
+
+-- ========================
+-- ESP System
+-- ========================
+local ESP_COLORS = {
+    murder  = Color3.fromRGB(255, 50,  50),
+    sheriff = Color3.fromRGB(50,  120, 255),
+    default = Color3.fromRGB(200, 200, 200),
+}
+
+local function removeESP(player)
+    if espHighlights[player.Name] then
+        pcall(function() espHighlights[player.Name]:Destroy() end)
+        espHighlights[player.Name] = nil
+    end
+end
+
+local function applyESP(player)
+    if player == LocalPlayer then return end
+    removeESP(player)
+    local char = player.Character
+    if not char then return end
+
+    local hl = Instance.new("Highlight")
+    hl.Name             = "AAS_HL_" .. player.Name
+    hl.FillTransparency = 0.5
+    local col = ESP_COLORS.default
+    if player.Name == latchedMurderer then col = ESP_COLORS.murder
+    elseif player.Name == latchedSheriff then col = ESP_COLORS.sheriff end
+    hl.FillColor    = col
+    hl.OutlineColor = col
+    hl.Adornee      = char
+    hl.Parent       = espGui
+    espHighlights[player.Name] = hl
+end
+
+local function refreshAllESP()
+    if not espEnabled then
+        for _, h in pairs(espHighlights) do pcall(function() h:Destroy() end) end
+        espHighlights = {}
+        return
+    end
+    for _, p in ipairs(Players:GetPlayers()) do applyESP(p) end
+end
+
+local function startESP()
+    espEnabled = true
+    refreshAllESP()
+    if espThread then task.cancel(espThread) end
+    espThread = task.spawn(function()
+        while espEnabled do
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p == LocalPlayer then continue end
+                if not espHighlights[p.Name] or not espHighlights[p.Name].Parent then applyESP(p) end
+                if espHighlights[p.Name] then
+                    local col = ESP_COLORS.default
+                    if p.Name == latchedMurderer then col = ESP_COLORS.murder
+                    elseif p.Name == latchedSheriff then col = ESP_COLORS.sheriff end
+                    pcall(function()
+                        espHighlights[p.Name].FillColor    = col
+                        espHighlights[p.Name].OutlineColor = col
+                    end)
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+    for _, p in ipairs(Players:GetPlayers()) do
+        p.CharacterAdded:Connect(function()
+            task.wait(1)
+            if espEnabled then applyESP(p) end
+        end)
+    end
+    table.insert(espConnections, Players.PlayerAdded:Connect(function(p)
+        task.wait(2)
+        if espEnabled then applyESP(p) end
+        p.CharacterAdded:Connect(function()
+            task.wait(1)
+            if espEnabled then applyESP(p) end
+        end)
+    end))
+    table.insert(espConnections, Players.PlayerRemoving:Connect(function(p) removeESP(p) end))
+end
+
+local function stopESP()
+    espEnabled = false
+    for _, c in ipairs(espConnections) do pcall(function() c:Disconnect() end) end
+    espConnections = {}
+    if espThread then task.cancel(espThread) espThread = nil end
+    for _, h in pairs(espHighlights) do pcall(function() h:Destroy() end) end
+    espHighlights = {}
+end
+
+-- ========================
+-- Role Detection (Latch Logic)
+-- ========================
+local function scanForNewRoles()
+    local foundMurder, foundSheriff = nil, nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        local char = p.Character
+        if not char then continue end
+        if not foundMurder  and char:FindFirstChild("Knife", true) then foundMurder  = p.Name end
+        if not foundSheriff and char:FindFirstChild("Gun",   true) then foundSheriff = p.Name end
+    end
+    if not foundMurder then
+        for _, obj in ipairs(workspace:GetChildren()) do
+            if obj.Name:find("Akura_Gameza") then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p.Character and p.Character:IsAncestorOf(obj) then
+                        foundMurder = p.Name break
+                    end
+                end
+            end
+        end
+    end
+    return foundMurder, foundSheriff
+end
+
+local function detectRoundActive()
+    local alive = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        local char = p.Character
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
+        if hum and hum.Health > 0 then alive += 1 end
+    end
+    return alive >= 2
+end
+
+local function startRoleDetect()
+    roleDetectEnabled = true
+    if roleThread then task.cancel(roleThread) end
+    roundActive = detectRoundActive()
+
+    roleThread = task.spawn(function()
+        while roleDetectEnabled do
+            local nowActive = detectRoundActive()
+
+            if nowActive and not roundActive then
+                roundActive = true
+                WindUI:Notify({ Title = "Round Started", Content = "Role scanning active", Duration = 3, Icon = "play" })
+            end
+
+            if roundActive then
+                local ok, fm, fs = pcall(scanForNewRoles)
+                if ok then
+                    if fm and not latchedMurderer then
+                        latchedMurderer = fm
+                        local p = Players:FindFirstChild(fm)
+                        if p then setRoleLabel(p, "murder") end
+                        updateStatusParagraphs()
+                        WindUI:Notify({ Title = "⚠ MURDER FOUND", Content = fm .. " is the Murderer!", Duration = 6, Icon = "alert-triangle" })
+                        if espEnabled then local mp = Players:FindFirstChild(fm) if mp then applyESP(mp) end end
+                    end
+                    if fs and not latchedSheriff then
+                        latchedSheriff = fs
+                        local p = Players:FindFirstChild(fs)
+                        if p then setRoleLabel(p, "sheriff") end
+                        updateStatusParagraphs()
+                        WindUI:Notify({ Title = "🔵 SHERIFF FOUND", Content = fs .. " is the Sheriff!", Duration = 6, Icon = "shield" })
+                        if espEnabled then local sp = Players:FindFirstChild(fs) if sp then applyESP(sp) end end
+                    end
+                    if fm or fs then lastWeaponSeenTick = tick() end
+                end
+            end
+
+            if roundActive and not nowActive then
+                if tick() - lastWeaponSeenTick >= ROUND_END_GRACE then
+                    roundActive = false
+                    clearAllRoleLabels()
+                    WindUI:Notify({ Title = "Round Ended", Content = "Roles cleared — waiting for next round", Duration = 4, Icon = "refresh-cw" })
+                end
+            end
+
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function stopRoleDetect()
+    roleDetectEnabled = false
+    if roleThread then task.cancel(roleThread) roleThread = nil end
+    clearAllRoleLabels()
+end
+
+-- ========================
+-- Gun Drop Warning System
+-- Watches workspace.Workplace.GunDrop for any children (gun models dropped there by the game)
+-- and shows a floating BillboardGui label above each one.
+-- ========================
+local function createGunDropLabel(part)
+    if gunDropLabels[part] then return end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name        = "AAS_GunDrop"
+    bb.Size        = UDim2.fromOffset(230, 65)
+    bb.StudsOffset = Vector3.new(0, 6, 0)
+    bb.AlwaysOnTop = true
+    bb.Adornee     = part
+    bb.Parent      = gunDropGui
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                   = UDim2.fromScale(1, 1)
+    lbl.BackgroundColor3       = Color3.fromRGB(15, 15, 15)
+    lbl.BackgroundTransparency = 0.15
+    lbl.TextScaled             = true
+    lbl.Font                   = Enum.Font.GothamBold
+    lbl.Text                   = "🔫  GUN DROP HERE!"
+    lbl.TextColor3             = Color3.fromRGB(255, 215, 0)
+    lbl.TextStrokeTransparency = 0
+    lbl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+    lbl.Parent = bb
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = lbl
+
+    gunDropLabels[part] = bb
+end
+
+local function removeGunDropLabel(part)
+    if gunDropLabels[part] then
+        pcall(function() gunDropLabels[part]:Destroy() end)
+        gunDropLabels[part] = nil
+    end
+end
+
+local function clearAllGunDropLabels()
+    for part in pairs(gunDropLabels) do removeGunDropLabel(part) end
+    gunDropLabels = {}
+end
+
+local function getGunDropFolder()
+    -- Path: workspace.Workplace.GunDrop
+    local wp = workspace:FindFirstChild("Workplace")
+    return wp and wp:FindFirstChild("GunDrop")
+end
+
+local function startGunDropWarn()
+    gunDropEnabled = true
+    if gunDropThread then task.cancel(gunDropThread) end
+    gunDropThread = task.spawn(function()
+        while gunDropEnabled do
+            local folder = getGunDropFolder()
+            local currentParts = {}
+
+            if folder then
+                for _, child in ipairs(folder:GetChildren()) do
+                    -- The gun model/part itself; find a BasePart to adorn
+                    local adornPart = child:IsA("BasePart") and child
+                        or child:FindFirstChildWhichIsA("BasePart", true)
+                    if adornPart then
+                        currentParts[child] = adornPart
+                        createGunDropLabel(adornPart)
+                    end
+                end
+            end
+
+            -- Remove labels for guns no longer in folder
+            for part, bb in pairs(gunDropLabels) do
+                if not part.Parent or not part:IsDescendantOf(workspace) then
+                    removeGunDropLabel(part)
+                end
+            end
+
+            task.wait(0.4)
+        end
+    end)
+end
+
+local function stopGunDropWarn()
+    gunDropEnabled = false
+    if gunDropThread then task.cancel(gunDropThread) gunDropThread = nil end
+    clearAllGunDropLabels()
+end
+
+-- ========================
+-- Looking System
+-- Rotates the local character and camera to face the latched Murderer's torso
+-- every RenderStepped frame. Gracefully skips when murder is not yet known.
+-- ========================
+local function getMurdererRoot()
+    if not latchedMurderer then return nil end
+    local p = Players:FindFirstChild(latchedMurderer)
+    if not p or not p.Character then return nil end
+    return p.Character:FindFirstChild("HumanoidRootPart")
+        or p.Character:FindFirstChild("RootPart")
+        or p.Character.PrimaryPart
+end
+
+local function startLooking()
+    lookingEnabled = true
+    if lookingConn then lookingConn:Disconnect() end
+    lookingConn = RunService.RenderStepped:Connect(function()
+        if not lookingEnabled then return end
+        local murderRoot = getMurdererRoot()
+        if not murderRoot then return end
+
+        local myChar = LocalPlayer.Character
+        local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+        if myHRP then
+            -- Rotate only on Y-axis so character doesn't tilt (feet stay on ground)
+            local targetPos = Vector3.new(murderRoot.Position.X, myHRP.Position.Y, murderRoot.Position.Z)
+            pcall(function() myHRP.CFrame = CFrame.new(myHRP.Position, targetPos) end)
+        end
+
+        -- Pivot camera toward the murderer's torso
+        pcall(function()
+            Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, murderRoot.Position)
+        end)
+    end)
+end
+
+local function stopLooking()
+    lookingEnabled = false
+    if lookingConn then lookingConn:Disconnect() lookingConn = nil end
+end
+
+-- When round resets, briefly pause Looking then resume (new murder may be assigned)
+local _baseClear = clearAllRoleLabels
+clearAllRoleLabels = function()
+    _baseClear()
+    if lookingEnabled then
+        if lookingConn then lookingConn:Disconnect() lookingConn = nil end
+        task.delay(1, function()
+            if lookingEnabled then startLooking() end
+        end)
+    end
+end
+
+-- ========================
+-- Noclip System
+-- ========================
+local function startNoclip()
+    noclipEnabled = true
+    if noclipThread then task.cancel(noclipThread) end
+    noclipThread = task.spawn(function()
+        while noclipEnabled do
+            local char = LocalPlayer.Character
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then pcall(function() part.CanCollide = false end) end
+                end
+            end
+            task.wait(0.1)
+        end
+        -- Restore on stop
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then pcall(function() part.CanCollide = true end) end
+            end
+        end
+    end)
+end
+
+local function stopNoclip()
+    noclipEnabled = false
+    if noclipThread then task.cancel(noclipThread) noclipThread = nil end
+    local char = LocalPlayer.Character
+    if char then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then pcall(function() part.CanCollide = true end) end
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if noclipEnabled then startNoclip() end
+end)
+
+-- ========================
+-- Tabs
+-- ========================
+local MainTab   = Window:Tab({ Title = "1. Detection", Icon = "shield-alert" })
+local ESPTab    = Window:Tab({ Title = "2. ESP",        Icon = "eye"          })
+local UtilTab   = Window:Tab({ Title = "3. Utility",    Icon = "tool"         })
+local MiscTab   = Window:Tab({ Title = "4. Misc",       Icon = "settings"     })
+
+-- ========================
+-- 1. Detection Tab
+-- ========================
+MainTab:Section({ Title = "1.1 Role Auto-Detect", Icon = "search" })
+MainTab:Paragraph({
+    Title = "Latch System",
+    Desc  = "Once a player picks up Knife (Murder) or Gun (Sheriff) they keep that label all round. Resets automatically when the round ends.",
+})
+MainTab:Toggle({
+    Title    = "Auto Detect Roles",
+    Desc     = "Scan for Murderer and Sheriff — locks in once found, resets each round",
+    Icon     = "radar",
+    Flag     = "roleDetect",
+    Callback = function(state)
+        if state then startRoleDetect() else stopRoleDetect() end
+        SaveConfig()
+    end,
+})
+MainTab:Divider()
+MainTab:Section({ Title = "1.2 Live Status", Icon = "activity" })
+
+-- Paragraphs created here then updated via deferred loop (NOT inline task.spawn)
+murderPara  = MainTab:Paragraph({ Title = "Murderer", Desc = "Not detected yet" })
+sheriffPara = MainTab:Paragraph({ Title = "Sheriff",  Desc = "Not detected yet" })
+
+MainTab:Button({
+    Title    = "Clear Labels (Manual)",
+    Desc     = "Force-reset all role labels if auto-clear misses it",
+    Icon     = "x-circle",
+    Callback = function()
+        clearAllRoleLabels()
+        WindUI:Notify({ Title = "Cleared", Content = "All role labels removed", Duration = 3, Icon = "check" })
+    end,
+})
+
+-- ========================
+-- 2. ESP Tab
+-- ========================
+ESPTab:Section({ Title = "2.1 Player ESP", Icon = "eye" })
+ESPTab:Paragraph({
+    Title = "ESP Colors",
+    Desc  = "Murder = Red  |  Sheriff = Blue  |  Others = Grey",
+})
+ESPTab:Toggle({
+    Title    = "Enable ESP",
+    Desc     = "Show highlighted player outlines through walls",
+    Icon     = "eye",
+    Flag     = "esp",
+    Callback = function(state)
+        if state then startESP() else stopESP() end
+        SaveConfig()
+    end,
+})
+ESPTab:Button({
+    Title    = "Refresh ESP",
+    Desc     = "Re-apply highlights to all current players",
+    Icon     = "refresh-cw",
+    Callback = function()
+        if espEnabled then refreshAllESP() end
+        WindUI:Notify({ Title = "ESP Refreshed", Duration = 2, Icon = "check" })
+    end,
+})
+
+-- ========================
+-- 3. Utility Tab
+-- ========================
+UtilTab:Section({ Title = "3.1 Gun Drop Warning", Icon = "alert-triangle" })
+UtilTab:Paragraph({
+    Title = "How it works",
+    Desc  = "Watches workspace.Workplace.GunDrop every 0.4s. Shows a big gold '🔫 GUN DROP HERE!' label floating above every gun found there. Disappears automatically when the gun is gone.",
+})
+UtilTab:Toggle({
+    Title    = "Auto Warn Gun Drop",
+    Desc     = "Show warning label above guns in workspace.Workplace.GunDrop",
+    Icon     = "alert-triangle",
+    Flag     = "gunDropWarn",
+    Callback = function(state)
+        if state then startGunDropWarn() else stopGunDropWarn() end
+        SaveConfig()
+    end,
+})
+UtilTab:Button({
+    Title    = "Clear Gun Labels",
+    Desc     = "Manually remove all Gun Drop labels right now",
+    Icon     = "x-circle",
+    Callback = function()
+        clearAllGunDropLabels()
+        WindUI:Notify({ Title = "Cleared", Content = "Gun drop labels removed", Duration = 3, Icon = "check" })
+    end,
+})
+
+UtilTab:Divider()
+UtilTab:Section({ Title = "3.2 Looking — Face Murder", Icon = "crosshair" })
+UtilTab:Paragraph({
+    Title = "How it works",
+    Desc  = "Rotates your character body and camera toward the Murderer's torso every frame. Only works after a Murderer is detected. Resets between rounds automatically.",
+})
+UtilTab:Toggle({
+    Title    = "Looking (Face Murder)",
+    Desc     = "Auto-rotate your character and camera to always look at the Murderer",
+    Icon     = "crosshair",
+    Flag     = "lookingEnabled",
+    Callback = function(state)
+        if state then startLooking() else stopLooking() end
+        SaveConfig()
+    end,
+})
+
+-- ========================
+-- 4. Misc Tab
+-- ========================
+MiscTab:Section({ Title = "4.1 Movement", Icon = "move" })
+MiscTab:Toggle({
+    Title    = "Noclip",
+    Desc     = "Disable collision on your character — walk through walls and props",
+    Icon     = "box-select",
+    Flag     = "noclip",
+    Callback = function(state)
+        if state then startNoclip() else stopNoclip() end
+        SaveConfig()
+    end,
+})
+MiscTab:Divider()
+MiscTab:Section({ Title = "4.2 Config", Icon = "save" })
+MiscTab:Button({
+    Title    = "Save Config Now",
+    Desc     = "Force-save all settings immediately",
+    Icon     = "save",
+    Callback = function()
+        SaveConfig()
+        WindUI:Notify({ Title = "Saved", Content = "Config saved successfully", Duration = 3, Icon = "check" })
+    end,
+})
+
+-- ========================
+-- Deferred Live Status Loop
+-- Started AFTER all UI is built — avoids crashing tab render
+-- ========================
+task.delay(2, function()
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            pcall(updateStatusParagraphs)
+        end
+    end)
+end)
+
+-- ========================
+-- Auto-Load Config on Start
+-- ========================
+task.spawn(function()
+    task.wait(1.5)
+    pcall(function()
+        ConfigManager:Load("default")
+        task.wait(0.3)
+        if GetValue("esp",           false) then startESP()          end
+        if GetValue("roleDetect",    false) then startRoleDetect()   end
+        if GetValue("gunDropWarn",   false) then startGunDropWarn()  end
+        if GetValue("lookingEnabled",false) then startLooking()      end
+        if GetValue("noclip",        false) then startNoclip()       end
+    end)
+end)
+
+-- ========================
+-- Ready Notify
+-- ========================
+WindUI:Notify({
+    Title    = "AAS : Murder Mystery Detector ✅",
+    Content  = "Script loaded! Enable Role Detect and ESP to start.",
+    Duration = 5,
+    Icon     = "shield-alert",
+})
