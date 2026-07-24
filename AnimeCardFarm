@@ -1,0 +1,368 @@
+-- ==========================================
+-- Script: Divinex | Anime Card Farm
+-- UI Library: Wind UI
+-- Description: Full Auto Farm, Fast Auto Buy, and Auto Grade Roll
+-- ==========================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- Create Main UI Window
+local Window = WindUI:CreateWindow({
+    Title = "Divinex | Anime Card Farm",
+    Icon = "lucide/sparkles",
+    Author = "Divinex",
+    Folder = "DivinexFarmConfig",
+    Size = UDim2.fromOffset(600, 560),
+    Transparent = true,
+    Theme = "Dark",
+    SideBarWidth = 180,
+    HasOutline = true,
+})
+
+-- Create Tabs
+local FarmTab = Window:Tab({
+    Title = "Auto Farm",
+    Icon = "lucide/gamepad-2"
+})
+
+local GradeTab = Window:Tab({
+    Title = "Grade F > UR",
+    Icon = "lucide/layers"
+})
+
+-- State Variables
+local AutoRollEnabled = false
+local AutoBuyEnabled = false
+local SelectedPack = "All"
+local RollDelay = 0.2
+
+local AutoGradeEnabled = false
+local SelectedCardForGrade = nil
+local SelectedTargetGrade = "UR"
+
+-- Mutation Selection Table
+local SelectedMutations = {}
+local MutationList = {
+    "Normal", "Golden", "Diamond", "Venomous", "Rainbow",
+    "Sakura", "Candy", "Blessed", "Radioactive", "Glitch", "Starfallen", "Admin"
+}
+
+-- Grade List
+local GradeList = {"F", "E", "D", "C", "B", "A", "S", "SS", "SR", "UR"}
+
+-- Scan available pack models from ReplicatedStorage
+local PackList = {"All"}
+if ReplicatedStorage:FindFirstChild("Models") and ReplicatedStorage.Models:FindFirstChild("Packs") then
+    for _, packModel in pairs(ReplicatedStorage.Models.Packs:GetChildren()) do
+        table.insert(PackList, packModel.Name)
+    end
+end
+
+-- Helper Function: Scans dynamic Plots in workspace
+local function GetAllPlots()
+    local plots = {}
+    if workspace:FindFirstChild("MAP") and workspace.MAP:FindFirstChild("Plots") then
+        for _, plot in pairs(workspace.MAP.Plots:GetChildren()) do
+            if plot:FindFirstChild("Plot_N0") then
+                table.insert(plots, plot)
+            end
+        end
+    end
+    return plots
+end
+
+-- Helper Function: Check Mutation Filter
+local function HasTargetMutation(packModel)
+    local count = 0
+    for _ in pairs(SelectedMutations) do count = count + 1 end
+    if count == 0 then return true end
+
+    local guiHolder = packModel:FindFirstChild("GuiHolder")
+    if not guiHolder then return false end
+
+    local billboard = guiHolder:FindFirstChild("BillboardGuiInfo")
+    if not billboard then return false end
+
+    local mutationFolder = billboard:FindFirstChild("Mutation")
+    if not mutationFolder then return false end
+
+    for mutationName, isSelected in pairs(SelectedMutations) do
+        if isSelected then
+            local mutChild = mutationFolder:FindFirstChild(mutationName)
+            if mutChild then
+                if mutChild:IsA("GuiObject") then
+                    if mutChild.Visible then return true end
+                else
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- Helper Function: Get Card List from Backpack & Character
+local function GetCardList()
+    local cards = {}
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if backpack then
+        for _, item in pairs(backpack:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(cards, item.Name)
+            end
+        end
+    end
+    if LocalPlayer.Character then
+        for _, item in pairs(LocalPlayer.Character:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(cards, item.Name)
+            end
+        end
+    end
+    return cards
+end
+
+-- Helper Function: Check if Target Card reached Target Grade
+local function CheckCardGrade(cardName, targetGrade)
+    local card = LocalPlayer.Backpack:FindFirstChild(cardName) 
+        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
+    
+    if not card then return false end
+
+    local cardHolder = card:FindFirstChild("CardHolder")
+    if not cardHolder then return false end
+
+    local surfaceGui = cardHolder:FindFirstChild("SurfaceGuiBack")
+    if not surfaceGui then return false end
+
+    local gradeFolder = surfaceGui:FindFirstChild("Grade")
+    if not gradeFolder then return false end
+
+    local gradeObj = gradeFolder:FindFirstChild(targetGrade)
+    if gradeObj then
+        if gradeObj:IsA("GuiObject") then
+            return gradeObj.Visible
+        end
+        return true
+    end
+
+    return false
+end
+
+-- ==========================================
+-- TAB 1: AUTO FARM & AUTO BUY
+-- ==========================================
+FarmTab:Section({ Title = "Auto Roll Settings" })
+
+FarmTab:Toggle({
+    Title = "Auto Roll",
+    Desc = "Automatically triggers the roll button across all active plots.",
+    Value = false,
+    Callback = function(Value)
+        AutoRollEnabled = Value
+        if AutoRollEnabled then
+            task.spawn(function()
+                while AutoRollEnabled do
+                    local plots = GetAllPlots()
+                    for _, plot in pairs(plots) do
+                        local plotN0 = plot:FindFirstChild("Plot_N0")
+                        if plotN0 then
+                            local buttonPart = plotN0:FindFirstChild("ButtonPart")
+                            if buttonPart then
+                                local clickDetector = buttonPart:FindFirstChildOfClass("ClickDetector")
+                                if clickDetector then
+                                    fireclickdetector(clickDetector)
+                                end
+                            end
+                        end
+                    end
+                    task.wait(RollDelay)
+                end
+            end)
+        end
+    end
+})
+
+FarmTab:Input({
+    Title = "Roll Delay (Seconds)",
+    Desc = "Set custom delay for auto roll (Default: 0.2s)",
+    Value = "0.2",
+    Placeholder = "Enter delay...",
+    Callback = function(Text)
+        local num = tonumber(Text)
+        if num and num >= 0 then
+            RollDelay = num
+        end
+    end
+})
+
+FarmTab:Section({ Title = "Auto Buy Settings" })
+
+FarmTab:Dropdown({
+    Title = "Select Target Pack",
+    Desc = "Select target pack or 'All' to buy everything.",
+    Values = PackList,
+    Value = "All",
+    Callback = function(Option)
+        SelectedPack = Option
+    end
+})
+
+FarmTab:Dropdown({
+    Title = "Select Target Mutations",
+    Desc = "Select desired mutations to filter pack purchases.",
+    Values = MutationList,
+    Multi = true,
+    Value = {},
+    Callback = function(Options)
+        SelectedMutations = {}
+        if type(Options) == "table" then
+            for _, mut in pairs(Options) do
+                SelectedMutations[mut] = true
+            end
+        elseif type(Options) == "string" then
+            SelectedMutations[Options] = true
+        end
+    end
+})
+
+-- Ultra-Fast Auto Buy ProximityPrompt Loop
+FarmTab:Toggle({
+    Title = "Auto Buy Packs (Rapid Buy)",
+    Desc = "Rapidly fires Proximity Prompts on conveyor items instantly.",
+    Value = false,
+    Callback = function(Value)
+        AutoBuyEnabled = Value
+        
+        if AutoBuyEnabled then
+            task.spawn(function()
+                while AutoBuyEnabled do
+                    local plots = GetAllPlots()
+                    for _, plot in pairs(plots) do
+                        local plotN0 = plot:FindFirstChild("Plot_N0")
+                        if plotN0 then
+                            local conveyor = plotN0:FindFirstChild("LocalConveyorModels")
+                            if conveyor then
+                                for _, packModel in pairs(conveyor:GetChildren()) do
+                                    if SelectedPack == "All" or packModel.Name == SelectedPack then
+                                        if HasTargetMutation(packModel) then
+                                            local mainPart = packModel:FindFirstChild("Main")
+                                            if mainPart then
+                                                local prompt = mainPart:FindFirstChildOfClass("ProximityPrompt")
+                                                if prompt then
+                                                    -- Fire multiple times rapid fire without wait delay
+                                                    fireproximityprompt(prompt, 0)
+                                                    fireproximityprompt(prompt)
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    task.wait(0.01) -- Fast loop delay to match fast Auto Roll
+                end
+            end)
+        end
+    end
+})
+
+-- ==========================================
+-- TAB 2: GRADE F > UR
+-- ==========================================
+GradeTab:Section({ Title = "Card & Grade Selection" })
+
+local CardDropdown = GradeTab:Dropdown({
+    Title = "Select Card For Grade",
+    Desc = "Select card from Backpack/Character to roll grade.",
+    Values = GetCardList(),
+    Value = nil,
+    Callback = function(Option)
+        SelectedCardForGrade = Option
+    end
+})
+
+GradeTab:Button({
+    Title = "Refresh Card List",
+    Desc = "Update list of available cards from Backpack.",
+    Callback = function()
+        local updatedCards = GetCardList()
+        CardDropdown:SetValues(updatedCards)
+    end
+})
+
+GradeTab:Dropdown({
+    Title = "Select Grade",
+    Desc = "Auto roll stops once this grade is reached.",
+    Values = GradeList,
+    Value = "UR",
+    Callback = function(Option)
+        SelectedTargetGrade = Option
+    end
+})
+
+GradeTab:Section({ Title = "Auto Roll Grade Control" })
+
+local GradeToggle
+GradeToggle = GradeTab:Toggle({
+    Title = "Auto Roll Grade",
+    Desc = "Rolls card grade automatically until target grade is acquired.",
+    Value = false,
+    Callback = function(Value)
+        AutoGradeEnabled = Value
+
+        if AutoGradeEnabled then
+            task.spawn(function()
+                local GradeRollRE = ReplicatedStorage:FindFirstChild("Remotes") 
+                    and ReplicatedStorage.Remotes:FindFirstChild("GradeRollRE")
+
+                while AutoGradeEnabled do
+                    if not SelectedCardForGrade or SelectedCardForGrade == "" then
+                        WindUI:Notify({ Title = "Warning", Content = "Please select a card first!", Duration = 3 })
+                        AutoGradeEnabled = false
+                        GradeToggle:SetValue(false)
+                        break
+                    end
+
+                    -- Find Card Tool Object
+                    local toolObj = LocalPlayer.Backpack:FindFirstChild(SelectedCardForGrade) 
+                        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(SelectedCardForGrade))
+
+                    if not toolObj then
+                        WindUI:Notify({ Title = "Error", Content = "Card not found in Backpack or Character!", Duration = 3 })
+                        AutoGradeEnabled = false
+                        GradeToggle:SetValue(false)
+                        break
+                    end
+
+                    -- Check if card has reached the target grade
+                    if CheckCardGrade(SelectedCardForGrade, SelectedTargetGrade) then
+                        WindUI:Notify({ 
+                            Title = "Success!", 
+                            Content = "Reached Grade: " .. tostring(SelectedTargetGrade) .. " for " .. tostring(SelectedCardForGrade), 
+                            Duration = 5 
+                        })
+                        AutoGradeEnabled = false
+                        GradeToggle:SetValue(false)
+                        break
+                    end
+
+                    -- Fire RemoteEvent to Roll Grade
+                    if GradeRollRE then
+                        GradeRollRE:FireServer("RollGrade", {
+                            Tool = toolObj,
+                            Currency = "Cash"
+                        })
+                    end
+
+                    task.wait(0.1) -- Adjustable delay between grade rolls
+                end
+            end)
+        end
+    end
+})
