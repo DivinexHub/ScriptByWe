@@ -1,14 +1,13 @@
 -- ==========================================
--- Script: Divinex | Anime Card Farm
+-- Script: Divinex | Anime Card Farm (Fixed Tab Loading)
 -- UI Library: Wind UI
--- Description: Auto Farm, Rapid Auto Buy, Multi & Smart Grade Detection
 -- ==========================================
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
-local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local WindUI = loadstring(game:HttpGet("https://tree-hub.vercel.app/api/UI/WindUI"))()
 
 -- Create Main UI Window
 local Window = WindUI:CreateWindow({
@@ -16,21 +15,21 @@ local Window = WindUI:CreateWindow({
     Icon = "lucide/sparkles",
     Author = "Divinex",
     Folder = "DivinexFarmConfig",
-    Size = UDim2.fromOffset(600, 560),
+    Size = UDim2.fromOffset(580, 480),
     Transparent = true,
     Theme = "Dark",
-    SideBarWidth = 180,
+    SideBarWidth = 170,
     HasOutline = true,
 })
 
--- Create Tabs
+-- Create Tabs (Safe Names)
 local FarmTab = Window:Tab({
     Title = "Auto Farm",
     Icon = "lucide/gamepad-2"
 })
 
 local GradeTab = Window:Tab({
-    Title = "Grade F > UR",
+    Title = "Grade Up",
     Icon = "lucide/layers"
 })
 
@@ -42,7 +41,7 @@ local RollDelay = 0.2
 
 local AutoGradeEnabled = false
 local SelectedCardForGrade = nil
-local SelectedTargetGrades = {} -- Stores target grades as { ["SR"] = true, ["UR"] = true }
+local SelectedTargetGrades = { ["UR"] = true }
 
 -- Mutation Selection Table
 local SelectedMutations = {}
@@ -68,11 +67,13 @@ local GradeRank = {
 
 -- Scan available pack models from ReplicatedStorage
 local PackList = {"All"}
-if ReplicatedStorage:FindFirstChild("Models") and ReplicatedStorage.Models:FindFirstChild("Packs") then
-    for _, packModel in pairs(ReplicatedStorage.Models.Packs:GetChildren()) do
-        table.insert(PackList, packModel.Name)
+pcall(function()
+    if ReplicatedStorage:FindFirstChild("Models") and ReplicatedStorage.Models:FindFirstChild("Packs") then
+        for _, packModel in pairs(ReplicatedStorage.Models.Packs:GetChildren()) do
+            table.insert(PackList, packModel.Name)
+        end
     end
-end
+end)
 
 -- Helper Function: Scans dynamic Plots in workspace
 local function GetAllPlots()
@@ -117,29 +118,31 @@ local function HasTargetMutation(packModel)
     return false
 end
 
--- Helper Function: Get Card List from Backpack & Character
+-- Safe Helper Function: Get Card List from Backpack & Character
 local function GetCardList()
     local cards = {}
     local seen = {}
 
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        for _, item in pairs(backpack:GetChildren()) do
-            if item:IsA("Tool") and not seen[item.Name] then
-                seen[item.Name] = true
-                table.insert(cards, item.Name)
+    pcall(function()
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack then
+            for _, item in pairs(backpack:GetChildren()) do
+                if item:IsA("Tool") and not seen[item.Name] then
+                    seen[item.Name] = true
+                    table.insert(cards, item.Name)
+                end
             end
         end
-    end
 
-    if LocalPlayer.Character then
-        for _, item in pairs(LocalPlayer.Character:GetChildren()) do
-            if item:IsA("Tool") and not seen[item.Name] then
-                seen[item.Name] = true
-                table.insert(cards, item.Name)
+        if LocalPlayer.Character then
+            for _, item in pairs(LocalPlayer.Character:GetChildren()) do
+                if item:IsA("Tool") and not seen[item.Name] then
+                    seen[item.Name] = true
+                    table.insert(cards, item.Name)
+                end
             end
         end
-    end
+    end)
 
     if #cards == 0 then
         table.insert(cards, "None")
@@ -148,7 +151,7 @@ local function GetCardList()
     return cards
 end
 
--- Smart Grade Function: Finds current grade and checks if it matches or exceeds selected target
+-- Smart Grade Function: Finds current grade and checks if target/higher is reached
 local function CheckSmartGrade(cardName)
     local card = LocalPlayer.Backpack:FindFirstChild(cardName) 
         or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
@@ -164,7 +167,6 @@ local function CheckSmartGrade(cardName)
     local gradeFolder = surfaceGui:FindFirstChild("Grade")
     if not gradeFolder then return false, nil end
 
-    -- Find current active grade on card
     local currentGradeName = nil
     local currentGradeRank = 0
 
@@ -188,7 +190,6 @@ local function CheckSmartGrade(cardName)
 
     if not currentGradeName then return false, nil end
 
-    -- Find lowest rank required among selected targets
     local minRequiredRank = 999
     local hasSelection = false
 
@@ -201,10 +202,8 @@ local function CheckSmartGrade(cardName)
         end
     end
 
-    -- If no target grade selected, stop immediately as safety
     if not hasSelection then return true, currentGradeName end
 
-    -- Check if current card grade rank is equal to or higher than target
     if currentGradeRank >= minRequiredRank then
         return true, currentGradeName
     end
@@ -289,7 +288,6 @@ FarmTab:Dropdown({
     end
 })
 
--- Ultra-Fast Auto Buy Loop
 FarmTab:Toggle({
     Title = "Auto Buy Packs (Rapid Buy)",
     Desc = "Rapidly fires Proximity Prompts on conveyor items instantly.",
@@ -331,23 +329,19 @@ FarmTab:Toggle({
 })
 
 -- ==========================================
--- TAB 2: GRADE F > UR
+-- TAB 2: GRADE UP
 -- ==========================================
 GradeTab:Section({ Title = "Card & Grade Selection" })
-
-local InitialCards = GetCardList()
 
 local CardDropdown = GradeTab:Dropdown({
     Title = "Select Card For Grade",
     Desc = "Select card from Backpack/Character to roll grade.",
-    Values = InitialCards,
-    Value = InitialCards[1] or nil,
+    Values = GetCardList(),
+    Value = nil,
     Callback = function(Option)
         SelectedCardForGrade = Option
     end
 })
-
-SelectedCardForGrade = InitialCards[1] ~= "None" and InitialCards[1] or nil
 
 GradeTab:Button({
     Title = "Refresh Card List",
@@ -358,7 +352,6 @@ GradeTab:Button({
         
         if #updatedCards > 0 and updatedCards[1] ~= "None" then
             SelectedCardForGrade = updatedCards[1]
-            CardDropdown:SetValue(updatedCards[1])
         end
 
         WindUI:Notify({
@@ -386,9 +379,6 @@ GradeTab:Dropdown({
         end
     end
 })
-
--- Initial Default Grade Setup
-SelectedTargetGrades["UR"] = true
 
 GradeTab:Section({ Title = "Auto Roll Grade Control" })
 
@@ -423,7 +413,6 @@ GradeToggle = GradeTab:Toggle({
                         break
                     end
 
-                    -- Smart Grade Check (Stops on target OR higher grade)
                     local isSuccess, currentGrade = CheckSmartGrade(SelectedCardForGrade)
                     if isSuccess then
                         WindUI:Notify({ 
@@ -436,7 +425,6 @@ GradeToggle = GradeTab:Toggle({
                         break
                     end
 
-                    -- Fire RemoteEvent to Roll Grade
                     if GradeRollRE then
                         GradeRollRE:FireServer("RollGrade", {
                             Tool = toolObj,
