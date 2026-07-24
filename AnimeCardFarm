@@ -1,7 +1,7 @@
 -- ==========================================
 -- Script: Divinex | Anime Card Farm
 -- UI Library: Wind UI
--- Description: Full Auto Farm, Fast Auto Buy, and Auto Grade Roll
+-- Description: Auto Farm, Rapid Auto Buy, Multi & Smart Grade Detection
 -- ==========================================
 
 local Players = game:GetService("Players")
@@ -42,7 +42,7 @@ local RollDelay = 0.2
 
 local AutoGradeEnabled = false
 local SelectedCardForGrade = nil
-local SelectedTargetGrade = "UR"
+local SelectedTargetGrades = {} -- Stores target grades as { ["SR"] = true, ["UR"] = true }
 
 -- Mutation Selection Table
 local SelectedMutations = {}
@@ -51,8 +51,20 @@ local MutationList = {
     "Sakura", "Candy", "Blessed", "Radioactive", "Glitch", "Starfallen", "Admin"
 }
 
--- Grade List
+-- Grade List & Hierarchy Index (For Smart Grade Detection)
 local GradeList = {"F", "E", "D", "C", "B", "A", "S", "SS", "SR", "UR"}
+local GradeRank = {
+    ["F"]  = 1,
+    ["E"]  = 2,
+    ["D"]  = 3,
+    ["C"]  = 4,
+    ["B"]  = 5,
+    ["A"]  = 6,
+    ["S"]  = 7,
+    ["SS"] = 8,
+    ["SR"] = 9,
+    ["UR"] = 10
+}
 
 -- Scan available pack models from ReplicatedStorage
 local PackList = {"All"}
@@ -108,49 +120,96 @@ end
 -- Helper Function: Get Card List from Backpack & Character
 local function GetCardList()
     local cards = {}
+    local seen = {}
+
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if backpack then
         for _, item in pairs(backpack:GetChildren()) do
-            if item:IsA("Tool") then
+            if item:IsA("Tool") and not seen[item.Name] then
+                seen[item.Name] = true
                 table.insert(cards, item.Name)
             end
         end
     end
+
     if LocalPlayer.Character then
         for _, item in pairs(LocalPlayer.Character:GetChildren()) do
-            if item:IsA("Tool") then
+            if item:IsA("Tool") and not seen[item.Name] then
+                seen[item.Name] = true
                 table.insert(cards, item.Name)
             end
         end
     end
+
+    if #cards == 0 then
+        table.insert(cards, "None")
+    end
+
     return cards
 end
 
--- Helper Function: Check if Target Card reached Target Grade
-local function CheckCardGrade(cardName, targetGrade)
+-- Smart Grade Function: Finds current grade and checks if it matches or exceeds selected target
+local function CheckSmartGrade(cardName)
     local card = LocalPlayer.Backpack:FindFirstChild(cardName) 
         or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
     
-    if not card then return false end
+    if not card then return false, nil end
 
     local cardHolder = card:FindFirstChild("CardHolder")
-    if not cardHolder then return false end
+    if not cardHolder then return false, nil end
 
     local surfaceGui = cardHolder:FindFirstChild("SurfaceGuiBack")
-    if not surfaceGui then return false end
+    if not surfaceGui then return false, nil end
 
     local gradeFolder = surfaceGui:FindFirstChild("Grade")
-    if not gradeFolder then return false end
+    if not gradeFolder then return false, nil end
 
-    local gradeObj = gradeFolder:FindFirstChild(targetGrade)
-    if gradeObj then
-        if gradeObj:IsA("GuiObject") then
-            return gradeObj.Visible
+    -- Find current active grade on card
+    local currentGradeName = nil
+    local currentGradeRank = 0
+
+    for _, gradeName in ipairs(GradeList) do
+        local gradeObj = gradeFolder:FindFirstChild(gradeName)
+        if gradeObj then
+            local isVisible = false
+            if gradeObj:IsA("GuiObject") then
+                isVisible = gradeObj.Visible
+            else
+                isVisible = true
+            end
+
+            if isVisible then
+                currentGradeName = gradeName
+                currentGradeRank = GradeRank[gradeName] or 0
+                break
+            end
         end
-        return true
     end
 
-    return false
+    if not currentGradeName then return false, nil end
+
+    -- Find lowest rank required among selected targets
+    local minRequiredRank = 999
+    local hasSelection = false
+
+    for gName, isSelected in pairs(SelectedTargetGrades) do
+        if isSelected and GradeRank[gName] then
+            hasSelection = true
+            if GradeRank[gName] < minRequiredRank then
+                minRequiredRank = GradeRank[gName]
+            end
+        end
+    end
+
+    -- If no target grade selected, stop immediately as safety
+    if not hasSelection then return true, currentGradeName end
+
+    -- Check if current card grade rank is equal to or higher than target
+    if currentGradeRank >= minRequiredRank then
+        return true, currentGradeName
+    end
+
+    return false, currentGradeName
 end
 
 -- ==========================================
@@ -230,7 +289,7 @@ FarmTab:Dropdown({
     end
 })
 
--- Ultra-Fast Auto Buy ProximityPrompt Loop
+-- Ultra-Fast Auto Buy Loop
 FarmTab:Toggle({
     Title = "Auto Buy Packs (Rapid Buy)",
     Desc = "Rapidly fires Proximity Prompts on conveyor items instantly.",
@@ -254,7 +313,6 @@ FarmTab:Toggle({
                                             if mainPart then
                                                 local prompt = mainPart:FindFirstChildOfClass("ProximityPrompt")
                                                 if prompt then
-                                                    -- Fire multiple times rapid fire without wait delay
                                                     fireproximityprompt(prompt, 0)
                                                     fireproximityprompt(prompt)
                                                 end
@@ -265,7 +323,7 @@ FarmTab:Toggle({
                             end
                         end
                     end
-                    task.wait(0.01) -- Fast loop delay to match fast Auto Roll
+                    task.wait(0.01)
                 end
             end)
         end
@@ -277,15 +335,19 @@ FarmTab:Toggle({
 -- ==========================================
 GradeTab:Section({ Title = "Card & Grade Selection" })
 
+local InitialCards = GetCardList()
+
 local CardDropdown = GradeTab:Dropdown({
     Title = "Select Card For Grade",
     Desc = "Select card from Backpack/Character to roll grade.",
-    Values = GetCardList(),
-    Value = nil,
+    Values = InitialCards,
+    Value = InitialCards[1] or nil,
     Callback = function(Option)
         SelectedCardForGrade = Option
     end
 })
+
+SelectedCardForGrade = InitialCards[1] ~= "None" and InitialCards[1] or nil
 
 GradeTab:Button({
     Title = "Refresh Card List",
@@ -293,25 +355,47 @@ GradeTab:Button({
     Callback = function()
         local updatedCards = GetCardList()
         CardDropdown:SetValues(updatedCards)
+        
+        if #updatedCards > 0 and updatedCards[1] ~= "None" then
+            SelectedCardForGrade = updatedCards[1]
+            CardDropdown:SetValue(updatedCards[1])
+        end
+
+        WindUI:Notify({
+            Title = "Refreshed",
+            Content = "Card list updated successfully!",
+            Duration = 2
+        })
     end
 })
 
 GradeTab:Dropdown({
-    Title = "Select Grade",
-    Desc = "Auto roll stops once this grade is reached.",
+    Title = "Select Target Grades (Smart Filter)",
+    Desc = "Multi-select target grades. Auto Roll stops if target or HIGHER grade is reached.",
     Values = GradeList,
-    Value = "UR",
-    Callback = function(Option)
-        SelectedTargetGrade = Option
+    Multi = true,
+    Value = {"UR"},
+    Callback = function(Options)
+        SelectedTargetGrades = {}
+        if type(Options) == "table" then
+            for _, g in pairs(Options) do
+                SelectedTargetGrades[g] = true
+            end
+        elseif type(Options) == "string" then
+            SelectedTargetGrades[Options] = true
+        end
     end
 })
+
+-- Initial Default Grade Setup
+SelectedTargetGrades["UR"] = true
 
 GradeTab:Section({ Title = "Auto Roll Grade Control" })
 
 local GradeToggle
 GradeToggle = GradeTab:Toggle({
     Title = "Auto Roll Grade",
-    Desc = "Rolls card grade automatically until target grade is acquired.",
+    Desc = "Rolls card grade automatically until target (or higher) grade is acquired.",
     Value = false,
     Callback = function(Value)
         AutoGradeEnabled = Value
@@ -322,29 +406,29 @@ GradeToggle = GradeTab:Toggle({
                     and ReplicatedStorage.Remotes:FindFirstChild("GradeRollRE")
 
                 while AutoGradeEnabled do
-                    if not SelectedCardForGrade or SelectedCardForGrade == "" then
-                        WindUI:Notify({ Title = "Warning", Content = "Please select a card first!", Duration = 3 })
+                    if not SelectedCardForGrade or SelectedCardForGrade == "" or SelectedCardForGrade == "None" then
+                        WindUI:Notify({ Title = "Warning", Content = "Please select a valid card first!", Duration = 3 })
                         AutoGradeEnabled = false
                         GradeToggle:SetValue(false)
                         break
                     end
 
-                    -- Find Card Tool Object
                     local toolObj = LocalPlayer.Backpack:FindFirstChild(SelectedCardForGrade) 
                         or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(SelectedCardForGrade))
 
                     if not toolObj then
-                        WindUI:Notify({ Title = "Error", Content = "Card not found in Backpack or Character!", Duration = 3 })
+                        WindUI:Notify({ Title = "Error", Content = "Selected card not found in Backpack or Character!", Duration = 3 })
                         AutoGradeEnabled = false
                         GradeToggle:SetValue(false)
                         break
                     end
 
-                    -- Check if card has reached the target grade
-                    if CheckCardGrade(SelectedCardForGrade, SelectedTargetGrade) then
+                    -- Smart Grade Check (Stops on target OR higher grade)
+                    local isSuccess, currentGrade = CheckSmartGrade(SelectedCardForGrade)
+                    if isSuccess then
                         WindUI:Notify({ 
-                            Title = "Success!", 
-                            Content = "Reached Grade: " .. tostring(SelectedTargetGrade) .. " for " .. tostring(SelectedCardForGrade), 
+                            Title = "Smart Stop Triggered!", 
+                            Content = "Acquired Grade: " .. tostring(currentGrade) .. " on " .. tostring(SelectedCardForGrade), 
                             Duration = 5 
                         })
                         AutoGradeEnabled = false
@@ -360,7 +444,7 @@ GradeToggle = GradeTab:Toggle({
                         })
                     end
 
-                    task.wait(0.1) -- Adjustable delay between grade rolls
+                    task.wait(0.1)
                 end
             end)
         end
