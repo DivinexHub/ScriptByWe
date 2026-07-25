@@ -1,0 +1,746 @@
+-- ==========================================
+-- Script: Divinex | Anime Card Farm
+-- UI Library: Wind UI
+-- Updated: Trait Roll Remote + Webhook Pack Filter
+-- ==========================================
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService       = game:GetService("HttpService")
+local LocalPlayer       = Players.LocalPlayer
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- ========================
+-- Window Setup
+-- ========================
+local Window = WindUI:CreateWindow({
+    Title        = "Divinex | Anime Card Farm",
+    Icon         = "sparkles",
+    Author       = "Divinex",
+    Folder       = "DivinexFarmConfig",
+    Save         = true,
+    Size         = UDim2.fromOffset(420, 490),
+    Transparent  = false,
+    Theme        = "Dark",
+    SideBarWidth = 120,
+    HasOutline   = true,
+})
+
+-- ========================
+-- State
+-- ========================
+local AutoRollEnabled      = false
+local AutoBuyEnabled       = false
+local SelectedPacks        = { ["All"] = true }
+local RollDelay            = 0.2
+local AutoGradeEnabled     = false
+local SelectedCardForGrade = nil
+local SelectedTargetGrades = { ["UR"] = true }
+local SelectedMutations    = {}
+local WebhookURL           = ""
+local WebhookEnabled       = false
+
+-- Trait States
+local AutoTraitEnabled     = false
+local SelectedCardForTrait = nil
+local SelectedTrait        = nil
+
+-- ========================
+-- Constants
+-- ========================
+local MutationList = {
+    "Normal","Golden","Diamond","Venomous","Rainbow",
+    "Sakura","Candy","Blessed","Radioactive","Glitch","Starfallen","Admin"
+}
+local GradeList = {"F","E","D","C","B","A","S","SS","SR","UR"}
+local GradeRank = {F=1,E=2,D=3,C=4,B=5,A=6,S=7,SS=8,SR=9,UR=10}
+
+local PackList = {"All"}
+pcall(function()
+    for _, p in pairs(ReplicatedStorage.Models.Packs:GetChildren()) do
+        table.insert(PackList, p.Name)
+    end
+end)
+
+-- Fetch Trait List from ReplicatedStorage
+local TraitList = {}
+pcall(function()
+    for _, t in pairs(ReplicatedStorage.Models.Traits:GetChildren()) do
+        table.insert(TraitList, t.Name)
+    end
+end)
+if #TraitList == 0 then TraitList = {"None"} end
+
+-- ========================
+-- Helpers
+-- ========================
+local function GetAllPlots()
+    local plots = {}
+    pcall(function()
+        for _, plot in pairs(workspace.MAP.Plots:GetChildren()) do
+            if plot:FindFirstChild("Plot_N0") then
+                table.insert(plots, plot)
+            end
+        end
+    end)
+    return plots
+end
+
+local function HasTargetMutation(packModel)
+    local count = 0
+    for _ in pairs(SelectedMutations) do count += 1 end
+    if count == 0 then return true end
+    local ok, mutFolder = pcall(function()
+        return packModel.GuiHolder.BillboardGuiInfo.Mutation
+    end)
+    if not ok or not mutFolder then return false end
+    for name, on in pairs(SelectedMutations) do
+        if on then
+            local child = mutFolder:FindFirstChild(name)
+            if child then
+                if child:IsA("GuiObject") and child.Visible then return true end
+                if not child:IsA("GuiObject") then return true end
+            end
+        end
+    end
+    return false
+end
+
+local function IsPackSelected(packName)
+    if SelectedPacks["All"] then return true end
+    return SelectedPacks[packName] == true
+end
+
+local function GetCardList()
+    local cards, seen = {}, {}
+    pcall(function()
+        for _, item in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if item:IsA("Tool") and not seen[item.Name] then
+                seen[item.Name] = true
+                table.insert(cards, item.Name)
+            end
+        end
+    end)
+    pcall(function()
+        for _, item in pairs(LocalPlayer.Character:GetChildren()) do
+            if item:IsA("Tool") and not seen[item.Name] then
+                seen[item.Name] = true
+                table.insert(cards, item.Name)
+            end
+        end
+    end)
+    return #cards > 0 and cards or {"None"}
+end
+
+local function RefreshDropdown(dropdown, newValues)
+    if not dropdown then return end
+    local ok1 = pcall(function() dropdown:Refresh(newValues) end)
+    if not ok1 then
+        pcall(function() dropdown:SetValues(newValues) end)
+    end
+end
+
+local function GetBackpackItemCount(itemName)
+    local count = 0
+    pcall(function()
+        for _, item in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if item.Name == itemName then count += 1 end
+        end
+    end)
+    pcall(function()
+        for _, item in pairs(LocalPlayer.Character:GetChildren()) do
+            if item.Name == itemName then count += 1 end
+        end
+    end)
+    return count
+end
+
+local function SendWebhook(itemName, quantity)
+    if not WebhookEnabled or WebhookURL == "" then return end
+    local httpRequest = (syn and syn.request)
+        or (http and http.request)
+        or http_request or request
+    if not httpRequest then return end
+    local payload = HttpService:JSONEncode({
+        username = "Divinex Notifier",
+        embeds = {{
+            title  = "🛒 Item Purchased!",
+            color  = 65280,
+            fields = {
+                { name = "Player",    value = LocalPlayer.Name,   inline = true },
+                { name = "Item",      value = itemName,            inline = true },
+                { name = "Qty",       value = tostring(quantity),  inline = true },
+            },
+            timestamp = DateTime.now():ToIsoDate()
+        }}
+    })
+    pcall(function()
+        httpRequest({
+            Url     = WebhookURL,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = payload,
+        })
+    end)
+end
+
+local function CheckSmartGrade(cardName)
+    local card = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(cardName))
+        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
+    if not card then return false, nil end
+    local ok, gradeFolder = pcall(function()
+        return card.CardHolder.SurfaceGuiBack.Grade
+    end)
+    if not ok or not gradeFolder then return false, nil end
+    local curName, curRank = nil, 0
+    for _, gName in ipairs(GradeList) do
+        local obj = gradeFolder:FindFirstChild(gName)
+        if obj then
+            local vis = obj:IsA("GuiObject") and obj.Visible or (not obj:IsA("GuiObject"))
+            if vis then curName = gName curRank = GradeRank[gName] or 0 break end
+        end
+    end
+    if not curName then return false, nil end
+    local minRank, hasTarget = 999, false
+    for gName, on in pairs(SelectedTargetGrades) do
+        if on and GradeRank[gName] then
+            hasTarget = true
+            if GradeRank[gName] < minRank then minRank = GradeRank[gName] end
+        end
+    end
+    if not hasTarget then return true, curName end
+    return curRank >= minRank, curName
+end
+
+-- Function เช็คสี Trait ระหว่างการ์ดกับโมเดลใน ReplicatedStorage
+local function CheckSmartTrait(cardName, targetTraitName)
+    if not cardName or not targetTraitName then return false end
+    
+    local card = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(cardName))
+        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
+    if not card then return false end
+
+    local targetModel = ReplicatedStorage.Models.Traits:FindFirstChild(targetTraitName)
+    if not targetModel then return false end
+
+    local cardGradient, targetGradient = nil, nil
+    
+    pcall(function()
+        cardGradient = card.CardHolder.SurfaceGuiBack.Trait.UIGradient
+    end)
+    pcall(function()
+        targetGradient = targetModel.UIGradient
+    end)
+
+    if cardGradient and targetGradient then
+        return tostring(cardGradient.Color) == tostring(targetGradient.Color)
+    end
+    
+    return false
+end
+
+-- ========================
+-- Smart Keep System
+-- Trait hierarchy: ยิ่งเลขมากยิ่งหายาก/ดีกว่า
+-- Smart Keep จะหยุดถ้า Trait ปัจจุบันบนการ์ด >= Rank ของ Target
+-- ป้องกันไม่ให้ roll ทับของที่ดีกว่าที่เลือกไว้
+-- ========================
+local TraitRank = {
+    -- Common (Tier 1)
+    ["Fortune I"]  = 1,
+    ["Strength I"] = 1,
+    ["Vigor I"]    = 1,
+    -- Rare (Tier 2)
+    ["Fortune II"]  = 2,
+    ["Strength II"] = 2,
+    ["Vigor II"]    = 2,
+    -- Epic (Tier 3)
+    ["Fortune III"]  = 3,
+    ["Strength III"] = 3,
+    ["Vigor III"]    = 3,
+    -- Legendary tiers (Tier 4-11, ยิ่งสูงยิ่งดี)
+    ["Assassin"]  = 4,
+    ["Berserk"]   = 5,
+    ["Tank"]      = 6,
+    ["Rich"]      = 7,
+    ["Emperor"]   = 8,
+    ["Phoenix"]   = 9,
+    ["Almighty"]  = 10,
+    ["Sovereign"] = 11, -- สูงสุด
+}
+
+-- หา Trait ปัจจุบันบนการ์ดโดยเปรียบสี UIGradient กับทุก Trait ใน ReplicatedStorage
+local function GetCurrentTraitName(cardName)
+    local card = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(cardName))
+        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
+    if not card then return nil end
+
+    local cardGradient = nil
+    pcall(function()
+        cardGradient = card.CardHolder.SurfaceGuiBack.Trait.UIGradient
+    end)
+    if not cardGradient then return nil end
+
+    local cardColorStr = tostring(cardGradient.Color)
+
+    -- วนเปรียบเทียบสีกับทุก Trait model ใน RS.Models.Traits
+    local ok, traitsFolder = pcall(function() return ReplicatedStorage.Models.Traits end)
+    if not ok or not traitsFolder then return nil end
+
+    for _, traitModel in pairs(traitsFolder:GetChildren()) do
+        local ok2, tGrad = pcall(function() return traitModel.UIGradient end)
+        if ok2 and tGrad then
+            if tostring(tGrad.Color) == cardColorStr then
+                return traitModel.Name
+            end
+        end
+    end
+    return nil
+end
+
+-- Smart Keep check: คืน (shouldStop, reason, currentTraitName)
+-- shouldStop = true หมายความว่าหยุด roll ได้เลย
+local function CheckSmartKeep(cardName, targetTraitName)
+    local currentTrait = GetCurrentTraitName(cardName)
+    if not currentTrait then
+        return false, "no_trait", nil -- ยังหา Trait ปัจจุบันไม่เจอ ข้ามไปก่อน
+    end
+
+    local currentRank = TraitRank[currentTrait] or 0
+    local targetRank  = TraitRank[targetTraitName] or 0
+
+    -- ตรงกับ target พอดี → หยุด
+    if currentTrait == targetTraitName then
+        return true, "exact_match", currentTrait
+    end
+
+    -- ดีกว่า target → Smart Keep หยุด ป้องกัน roll ทับ
+    if currentRank > targetRank then
+        return true, "better_than_target", currentTrait
+    end
+
+    -- ยังไม่ถึง → roll ต่อ
+    return false, "below_target", currentTrait
+end
+
+-- Webhook monitor (ตรวจจับเฉพาะไอเทมที่มีคำว่า "Pack")
+task.spawn(function()
+    local bp = LocalPlayer:WaitForChild("Backpack", 10)
+    if not bp then return end
+    bp.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") and AutoBuyEnabled and string.find(child.Name, "Pack") then
+            task.wait(0.2)
+            SendWebhook(child.Name, GetBackpackItemCount(child.Name))
+        end
+    end)
+end)
+
+-- ========================
+-- Tabs
+-- ========================
+local FarmTab     = Window:Tab({ Title = "Farm",     Icon = "gamepad-2" })
+local GradeTab    = Window:Tab({ Title = "Grade Up", Icon = "layers"    })
+local TraitsTab   = Window:Tab({ Title = "Traits",   Icon = "sparkles"  })
+local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings"  })
+
+-- ========================
+-- FARM TAB
+-- ========================
+FarmTab:Section({ Title = "Auto Roll" })
+
+FarmTab:Toggle({
+    Title = "Auto Roll",
+    Desc  = "Clicks roll button on all active plots",
+    Flag  = "autoRoll",
+    Callback = function(v)
+        AutoRollEnabled = v
+        if not v then return end
+        task.spawn(function()
+            while AutoRollEnabled do
+                for _, plot in pairs(GetAllPlots()) do
+                    local n0 = plot:FindFirstChild("Plot_N0")
+                    local bp = n0 and n0:FindFirstChild("ButtonPart")
+                    local cd = bp and bp:FindFirstChildOfClass("ClickDetector")
+                    if cd then pcall(fireclickdetector, cd) end
+                end
+                task.wait(RollDelay)
+            end
+        end)
+    end,
+})
+
+FarmTab:Input({
+    Title       = "Roll Delay (sec)",
+    Desc        = "Delay between each roll — default 0.2",
+    Placeholder = "0.2",
+    Flag        = "rollDelay",
+    Callback    = function(v) RollDelay = tonumber(v) or 0.2 end,
+})
+
+FarmTab:Divider()
+FarmTab:Section({ Title = "Auto Buy" })
+
+FarmTab:Dropdown({
+    Title    = "Target Packs",
+    Desc     = "Which packs to buy — All = everything",
+    Values   = PackList,
+    Multi    = true,
+    Flag     = "selectedPacks",
+    Callback = function(opts)
+        SelectedPacks = {}
+        if type(opts) == "table" then
+            for _, p in pairs(opts) do SelectedPacks[p] = true end
+        elseif type(opts) == "string" then
+            SelectedPacks[opts] = true
+        end
+    end,
+})
+
+FarmTab:Dropdown({
+    Title    = "Target Mutations",
+    Desc     = "Only buy packs with these mutations (empty = all)",
+    Values   = MutationList,
+    Multi    = true,
+    Flag     = "selectedMutations",
+    Callback = function(opts)
+        SelectedMutations = {}
+        if type(opts) == "table" then
+            for _, m in pairs(opts) do SelectedMutations[m] = true end
+        elseif type(opts) == "string" then
+            SelectedMutations[opts] = true
+        end
+    end,
+})
+
+FarmTab:Toggle({
+    Title = "Auto Buy Packs",
+    Desc  = "Fires ProximityPrompts on conveyor packs rapidly",
+    Flag  = "autoBuy",
+    Callback = function(v)
+        AutoBuyEnabled = v
+        if not v then return end
+        task.spawn(function()
+            while AutoBuyEnabled do
+                for _, plot in pairs(GetAllPlots()) do
+                    local n0       = plot:FindFirstChild("Plot_N0")
+                    local conveyor = n0 and n0:FindFirstChild("LocalConveyorModels")
+                    if conveyor then
+                        for _, pack in pairs(conveyor:GetChildren()) do
+                            if IsPackSelected(pack.Name) and HasTargetMutation(pack) then
+                                local prompt = pack:FindFirstChild("Main")
+                                    and pack.Main:FindFirstChildOfClass("ProximityPrompt")
+                                if prompt then
+                                    pcall(fireproximityprompt, prompt, 0)
+                                    pcall(fireproximityprompt, prompt)
+                                end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.01)
+            end
+        end)
+    end,
+})
+
+-- ========================
+-- GRADE TAB
+-- ========================
+GradeTab:Section({ Title = "Card & Grade Selection" })
+
+local initialCards = GetCardList()
+local CardDropdown = GradeTab:Dropdown({
+    Title    = "Select Card",
+    Desc     = "Pick a card from Backpack to grade-roll",
+    Values   = initialCards,
+    Flag     = "selectedCard",
+    Callback = function(v) SelectedCardForGrade = v end,
+})
+SelectedCardForGrade = initialCards[1] ~= "None" and initialCards[1] or nil
+
+GradeTab:Button({
+    Title = "Refresh Card List",
+    Desc  = "Re-scan Backpack and Character for latest cards",
+    Icon  = "refresh-cw",
+    Callback = function()
+        local cards = GetCardList()
+        RefreshDropdown(CardDropdown, cards)
+
+        if cards[1] and cards[1] ~= "None" then
+            SelectedCardForGrade = cards[1]
+            pcall(function() CardDropdown:SetValue(cards[1]) end)
+        else
+            SelectedCardForGrade = nil
+        end
+
+        WindUI:Notify({
+            Title   = "Refreshed ✅",
+            Content = "Found " .. #cards .. " card(s) in Backpack",
+            Duration = 3,
+            Icon    = "check",
+        })
+    end,
+})
+
+GradeTab:Dropdown({
+    Title    = "Target Grades",
+    Desc     = "Stops when card reaches this grade or higher",
+    Values   = GradeList,
+    Multi    = true,
+    Flag     = "targetGrades",
+    Callback = function(opts)
+        SelectedTargetGrades = {}
+        if type(opts) == "table" then
+            for _, g in pairs(opts) do SelectedTargetGrades[g] = true end
+        elseif type(opts) == "string" then
+            SelectedTargetGrades[opts] = true
+        end
+    end,
+})
+SelectedTargetGrades["UR"] = true
+
+GradeTab:Divider()
+GradeTab:Section({ Title = "Auto Grade Roll" })
+
+local GradeToggle
+GradeToggle = GradeTab:Toggle({
+    Title = "Auto Roll Grade",
+    Desc  = "Rolls card grade until target or higher is reached",
+    Flag  = "autoGrade",
+    Callback = function(v)
+        AutoGradeEnabled = v
+        if not v then return end
+        task.spawn(function()
+            local GradeRollRE = nil
+            pcall(function() GradeRollRE = ReplicatedStorage.Remotes.GradeRollRE end)
+
+            while AutoGradeEnabled do
+                if not SelectedCardForGrade or SelectedCardForGrade == "None" then
+                    WindUI:Notify({ Title = "Warning", Content = "Select a card first!", Duration = 3, Icon = "alert-circle" })
+                    AutoGradeEnabled = false
+                    pcall(function() GradeToggle:SetValue(false) end)
+                    break
+                end
+
+                local tool = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(SelectedCardForGrade))
+                    or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(SelectedCardForGrade))
+
+                if not tool then
+                    WindUI:Notify({ Title = "Error", Content = SelectedCardForGrade .. " not found!", Duration = 3, Icon = "x" })
+                    AutoGradeEnabled = false
+                    pcall(function() GradeToggle:SetValue(false) end)
+                    break
+                end
+
+                local done, grade = CheckSmartGrade(SelectedCardForGrade)
+                if done then
+                    WindUI:Notify({
+                        Title    = "Grade Reached! ✅",
+                        Content  = SelectedCardForGrade .. " → " .. tostring(grade),
+                        Duration = 6,
+                        Icon     = "check-circle",
+                    })
+                    AutoGradeEnabled = false
+                    pcall(function() GradeToggle:SetValue(false) end)
+                    break
+                end
+
+                if GradeRollRE then
+                    pcall(function()
+                        GradeRollRE:FireServer("RollGrade", { Tool = tool, Currency = "Cash" })
+                    end)
+                end
+
+                task.wait(0.1)
+            end
+        end)
+    end,
+})
+
+-- ========================
+-- TRAITS TAB
+-- ========================
+TraitsTab:Section({ Title = "Card & Trait Selection" })
+
+local TraitCardDropdown = TraitsTab:Dropdown({
+    Title    = "Select Card For Roll Traits",
+    Desc     = "Pick a card from Backpack to trait-roll",
+    Values   = initialCards,
+    Flag     = "selectedCardTrait",
+    Callback = function(v) SelectedCardForTrait = v end,
+})
+SelectedCardForTrait = initialCards[1] ~= "None" and initialCards[1] or nil
+
+TraitsTab:Button({
+    Title = "Refresh Card List",
+    Desc  = "Re-scan Backpack and Character for latest cards",
+    Icon  = "refresh-cw",
+    Callback = function()
+        local cards = GetCardList()
+        RefreshDropdown(TraitCardDropdown, cards)
+
+        if cards[1] and cards[1] ~= "None" then
+            SelectedCardForTrait = cards[1]
+            pcall(function() TraitCardDropdown:SetValue(cards[1]) end)
+        else
+            SelectedCardForTrait = nil
+        end
+
+        WindUI:Notify({
+            Title   = "Refreshed ✅",
+            Content = "Found " .. #cards .. " card(s) in Backpack",
+            Duration = 3,
+            Icon    = "check",
+        })
+    end,
+})
+
+TraitsTab:Dropdown({
+    Title    = "Select Target Trait",
+    Desc     = "Stops when card trait gradient matches target trait color",
+    Values   = TraitList,
+    Flag     = "selectedTrait",
+    Callback = function(v) SelectedTrait = v end,
+})
+SelectedTrait = TraitList[1] ~= "None" and TraitList[1] or nil
+
+TraitsTab:Divider()
+TraitsTab:Section({ Title = "Auto Trait Roll" })
+
+TraitsTab:Paragraph({
+    Title = "🛡 Smart Keep",
+    Desc  = "ก่อน roll ทุกครั้ง ระบบจะเช็ค Trait ปัจจุบันบนการ์ด หากได้ Trait ที่ดีกว่า Target ที่เลือกไว้ จะหยุดอัตโนมัติและแจ้งเตือน ป้องกัน roll ทับของที่ดีกว่า\n\nTier: Common(I) < Rare(II) < Epic(III) < Assassin < Berserk < Tank < Rich < Emperor < Phoenix < Almighty < Sovereign",
+})
+
+local TraitToggle
+TraitToggle = TraitsTab:Toggle({
+    Title = "Auto Roll Traits",
+    Desc  = "Rolls card trait until target trait color is matched — Smart Keep stops if better trait is detected",
+    Flag  = "autoTrait",
+    Callback = function(v)
+        AutoTraitEnabled = v
+        if not v then return end
+        task.spawn(function()
+            local TraitRollRE = nil
+            pcall(function() TraitRollRE = ReplicatedStorage.Remotes.TraitRollRE end)
+
+            while AutoTraitEnabled do
+                -- Guard: card selected
+                if not SelectedCardForTrait or SelectedCardForTrait == "None" then
+                    WindUI:Notify({ Title = "Warning", Content = "Select a card first!", Duration = 3, Icon = "alert-circle" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                -- Guard: trait selected
+                if not SelectedTrait or SelectedTrait == "None" then
+                    WindUI:Notify({ Title = "Warning", Content = "Select a target trait first!", Duration = 3, Icon = "alert-circle" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                -- Guard: card exists
+                local tool = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(SelectedCardForTrait))
+                    or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(SelectedCardForTrait))
+
+                if not tool then
+                    WindUI:Notify({ Title = "Error", Content = SelectedCardForTrait .. " not found!", Duration = 3, Icon = "x" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                -- Smart Keep Check — ตรวจก่อน roll ทุกครั้ง
+                local shouldStop, reason, currentTrait = CheckSmartKeep(SelectedCardForTrait, SelectedTrait)
+
+                if shouldStop then
+                    if reason == "exact_match" then
+                        WindUI:Notify({
+                            Title    = "Trait Reached! ✅",
+                            Content  = SelectedCardForTrait .. " → " .. tostring(currentTrait),
+                            Duration = 6,
+                            Icon     = "check-circle",
+                        })
+                    elseif reason == "better_than_target" then
+                        -- Smart Keep: ได้ของดีกว่า target → หยุดทันที อย่า roll ทับ
+                        WindUI:Notify({
+                            Title    = "🛡 Smart Keep — Better Trait!",
+                            Content  = "Got: " .. tostring(currentTrait) .. " (better than " .. SelectedTrait .. ") — Stopping to protect it!",
+                            Duration = 8,
+                            Icon     = "shield",
+                        })
+                    end
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                -- ยังไม่ถึง → fire roll
+                if TraitRollRE then
+                    pcall(function()
+                        TraitRollRE:FireServer("RollTrait", { Tool = tool })
+                    end)
+                end
+
+                task.wait(0.1)
+            end
+        end)
+    end,
+})
+
+-- ========================
+-- SETTINGS TAB
+-- ========================
+SettingsTab:Section({ Title = "Discord Webhook" })
+
+SettingsTab:Input({
+    Title       = "Webhook URL",
+    Desc        = "Paste Discord Webhook URL to receive buy logs",
+    Placeholder = "https://discord.com/api/webhooks/...",
+    Flag        = "webhookUrl",
+    Callback    = function(v) WebhookURL = v or "" end,
+})
+
+SettingsTab:Toggle({
+    Title = "Enable Webhook",
+    Desc  = "Send a Discord message every time a pack is bought",
+    Flag  = "webhookEnabled",
+    Callback = function(v) WebhookEnabled = v end,
+})
+
+SettingsTab:Button({
+    Title = "Test Webhook",
+    Desc  = "Send a test message to verify your URL",
+    Icon  = "send",
+    Callback = function()
+        if WebhookURL ~= "" then
+            SendWebhook("Test Pack", 1)
+            WindUI:Notify({ Title = "Test Sent", Content = "Check your Discord channel", Duration = 3, Icon = "check" })
+        else
+            WindUI:Notify({ Title = "No URL", Content = "Enter a Webhook URL first", Duration = 3, Icon = "alert-circle" })
+        end
+    end,
+})
+
+-- ========================
+-- Auto-Load
+-- ========================
+task.spawn(function()
+    task.wait(1.5)
+    pcall(function()
+        Window.ConfigManager:Load("default")
+        task.wait(0.3)
+        RollDelay  = tonumber(Window:GetFlag("rollDelay")) or 0.2
+        WebhookURL = Window:GetFlag("webhookUrl") or ""
+    end)
+end)
+
+WindUI:Notify({
+    Title    = "Divinex | Anime Card Farm ✅",
+    Content  = "Loaded! Go to Farm tab to start.",
+    Duration = 4,
+    Icon     = "sparkles",
+})
