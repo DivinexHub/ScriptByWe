@@ -36,7 +36,7 @@ local SelectedPacks        = { ["All"] = true }
 local RollDelay            = 0.2
 local AutoGradeEnabled     = false
 local SelectedCardForGrade = nil
-local SelectedTargetGrades = { ["UR"] = true }
+local SelectedTargetGrades = { ["LR"] = true }
 local SelectedMutations    = {}
 local WebhookURL           = ""
 local WebhookEnabled       = false
@@ -53,8 +53,8 @@ local MutationList = {
     "Normal","Golden","Diamond","Venomous","Rainbow",
     "Sakura","Candy","Blessed","Radioactive","Glitch","Starfallen","Admin"
 }
-local GradeList = {"F","E","D","C","B","A","S","SS","SR","UR"}
-local GradeRank = {F=1,E=2,D=3,C=4,B=5,A=6,S=7,SS=8,SR=9,UR=10}
+local GradeList = {"F","E","D","C","B","A","S","SS","SR","UR","LR"}
+local GradeRank = {F=1,E=2,D=3,C=4,B=5,A=6,S=7,SS=8,SR=9,UR=10,LR=11}
 
 local PackList = {"All"}
 pcall(function()
@@ -498,7 +498,7 @@ GradeTab:Dropdown({
         end
     end,
 })
-SelectedTargetGrades["UR"] = true
+SelectedTargetGrades["LR"] = true
 
 GradeTab:Divider()
 GradeTab:Section({ Title = "Auto Grade Roll" })
