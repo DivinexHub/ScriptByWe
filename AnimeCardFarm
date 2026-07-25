@@ -724,6 +724,31 @@ SettingsTab:Button({
         end
     end,
 })
+-- =======================
+SettingsTab:Divider()
+SettingsTab:Section({ Title = "Community" })
+
+SettingsTab:Button({
+    Title = "Join Discord",
+    Desc  = "Copy Discord invite link to clipboard",
+    Icon  = "message-square",
+    Callback = function()
+        local discordLink = "https://discord.gg/CKhjTc4Sn"
+        
+        if setclipboard then
+            setclipboard(discordLink)
+        elseif toclipboard then
+            toclipboard(discordLink)
+        end
+
+        WindUI:Notify({
+            Title    = "Discord Link Copied! 📋",
+            Content  = "Copied to clipboard: " .. discordLink,
+            Duration = 4,
+            Icon     = "check",
+        })
+    end,
+})
 
 -- ========================
 -- Auto-Load
