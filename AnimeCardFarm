@@ -1,7 +1,7 @@
 -- ==========================================
 -- Script: Divinex | Anime Card Farm
 -- UI Library: Wind UI
--- Updated: Filter Webhook + Auto Roll Traits
+-- Updated: Trait Roll Remote + Webhook Pack Filter
 -- ==========================================
 
 local Players           = game:GetService("Players")
@@ -12,7 +12,7 @@ local LocalPlayer       = Players.LocalPlayer
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 -- ========================
--- Window — Mobile-friendly
+-- Window Setup
 -- ========================
 local Window = WindUI:CreateWindow({
     Title        = "Divinex | Anime Card Farm",
@@ -234,14 +234,13 @@ local function CheckSmartTrait(cardName, targetTraitName)
     end)
 
     if cardGradient and targetGradient then
-        -- เปรียบเทียบค่าสี (ColorSequence) โดยแปลงเป็น String
         return tostring(cardGradient.Color) == tostring(targetGradient.Color)
     end
     
     return false
 end
 
--- Webhook monitor (ปรับแก้ให้ตรวจจับเฉพาะไอเทมที่มีคำว่า "Pack")
+-- Webhook monitor (ตรวจจับเฉพาะไอเทมที่มีคำว่า "Pack")
 task.spawn(function()
     local bp = LocalPlayer:WaitForChild("Backpack", 10)
     if not bp then return end
@@ -534,8 +533,8 @@ TraitToggle = TraitsTab:Toggle({
         AutoTraitEnabled = v
         if not v then return end
         task.spawn(function()
-            local GradeRollRE = nil
-            pcall(function() GradeRollRE = ReplicatedStorage.Remotes.GradeRollRE end)
+            local TraitRollRE = nil
+            pcall(function() TraitRollRE = ReplicatedStorage.Remotes.TraitRollRE end)
 
             while AutoTraitEnabled do
                 if not SelectedCardForTrait or SelectedCardForTrait == "None" then
@@ -575,9 +574,10 @@ TraitToggle = TraitsTab:Toggle({
                     break
                 end
 
-                if GradeRollRE then
+                -- เรียกใช้ Remote สุ่ม Trait ตามโครงสร้างของคุณ
+                if TraitRollRE then
                     pcall(function()
-                        pcall:FireServer("RollTrait", { Tool = tool, Currency = "Cash" })
+                        TraitRollRE:FireServer("RollTrait", { Tool = tool })
                     end)
                 end
 
