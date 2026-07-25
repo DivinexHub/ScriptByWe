@@ -1,7 +1,7 @@
 -- ==========================================
 -- Script: Divinex | Anime Card Farm
 -- UI Library: Wind UI
--- Fixed: Refresh Card List + Mobile Dropdown size
+-- Updated: Filter Webhook + Auto Roll Traits
 -- ==========================================
 
 local Players           = game:GetService("Players")
@@ -13,9 +13,6 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 
 -- ========================
 -- Window — Mobile-friendly
--- Key fixes:
---   Size reduced to 420x490 so dropdown lists don't overflow the screen
---   SideBarWidth reduced to 120 so the content area is wider relative to screen
 -- ========================
 local Window = WindUI:CreateWindow({
     Title        = "Divinex | Anime Card Farm",
@@ -44,6 +41,11 @@ local SelectedMutations    = {}
 local WebhookURL           = ""
 local WebhookEnabled       = false
 
+-- Trait States
+local AutoTraitEnabled     = false
+local SelectedCardForTrait = nil
+local SelectedTrait        = nil
+
 -- ========================
 -- Constants
 -- ========================
@@ -60,6 +62,15 @@ pcall(function()
         table.insert(PackList, p.Name)
     end
 end)
+
+-- Fetch Trait List from ReplicatedStorage
+local TraitList = {}
+pcall(function()
+    for _, t in pairs(ReplicatedStorage.Models.Traits:GetChildren()) do
+        table.insert(TraitList, t.Name)
+    end
+end)
+if #TraitList == 0 then TraitList = {"None"} end
 
 -- ========================
 -- Helpers
@@ -101,7 +112,6 @@ local function IsPackSelected(packName)
     return SelectedPacks[packName] == true
 end
 
--- FIX: Safe card list that always returns a valid table
 local function GetCardList()
     local cards, seen = {}, {}
     pcall(function()
@@ -123,10 +133,8 @@ local function GetCardList()
     return #cards > 0 and cards or {"None"}
 end
 
--- FIX: Refresh dropdown safely — tries both method names WindUI may expose
 local function RefreshDropdown(dropdown, newValues)
     if not dropdown then return end
-    -- WindUI exposes either :Refresh() or :SetValues() depending on version
     local ok1 = pcall(function() dropdown:Refresh(newValues) end)
     if not ok1 then
         pcall(function() dropdown:SetValues(newValues) end)
@@ -205,12 +213,40 @@ local function CheckSmartGrade(cardName)
     return curRank >= minRank, curName
 end
 
--- Webhook monitor
+-- Function เช็คสี Trait ระหว่างการ์ดกับโมเดลใน ReplicatedStorage
+local function CheckSmartTrait(cardName, targetTraitName)
+    if not cardName or not targetTraitName then return false end
+    
+    local card = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(cardName))
+        or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(cardName))
+    if not card then return false end
+
+    local targetModel = ReplicatedStorage.Models.Traits:FindFirstChild(targetTraitName)
+    if not targetModel then return false end
+
+    local cardGradient, targetGradient = nil, nil
+    
+    pcall(function()
+        cardGradient = card.CardHolder.SurfaceGuiBack.Trait.UIGradient
+    end)
+    pcall(function()
+        targetGradient = targetModel.UIGradient
+    end)
+
+    if cardGradient and targetGradient then
+        -- เปรียบเทียบค่าสี (ColorSequence) โดยแปลงเป็น String
+        return tostring(cardGradient.Color) == tostring(targetGradient.Color)
+    end
+    
+    return false
+end
+
+-- Webhook monitor (ปรับแก้ให้ตรวจจับเฉพาะไอเทมที่มีคำว่า "Pack")
 task.spawn(function()
     local bp = LocalPlayer:WaitForChild("Backpack", 10)
     if not bp then return end
     bp.ChildAdded:Connect(function(child)
-        if child:IsA("Tool") and AutoBuyEnabled then
+        if child:IsA("Tool") and AutoBuyEnabled and string.find(child.Name, "Pack") then
             task.wait(0.2)
             SendWebhook(child.Name, GetBackpackItemCount(child.Name))
         end
@@ -222,6 +258,7 @@ end)
 -- ========================
 local FarmTab     = Window:Tab({ Title = "Farm",     Icon = "gamepad-2" })
 local GradeTab    = Window:Tab({ Title = "Grade Up", Icon = "layers"    })
+local TraitsTab   = Window:Tab({ Title = "Traits",   Icon = "sparkles"  })
 local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings"  })
 
 -- ========================
@@ -339,21 +376,16 @@ local CardDropdown = GradeTab:Dropdown({
 })
 SelectedCardForGrade = initialCards[1] ~= "None" and initialCards[1] or nil
 
--- FIX: Refresh Card List now uses safe RefreshDropdown helper with dual method fallback
 GradeTab:Button({
     Title = "Refresh Card List",
     Desc  = "Re-scan Backpack and Character for latest cards",
     Icon  = "refresh-cw",
     Callback = function()
         local cards = GetCardList()
-
-        -- Safely refresh the dropdown regardless of which method WindUI exposes
         RefreshDropdown(CardDropdown, cards)
 
-        -- Update selection to first valid card
         if cards[1] and cards[1] ~= "None" then
             SelectedCardForGrade = cards[1]
-            -- Optionally sync the dropdown's displayed value if WindUI supports it
             pcall(function() CardDropdown:SetValue(cards[1]) end)
         else
             SelectedCardForGrade = nil
@@ -434,6 +466,118 @@ GradeToggle = GradeTab:Toggle({
                 if GradeRollRE then
                     pcall(function()
                         GradeRollRE:FireServer("RollGrade", { Tool = tool, Currency = "Cash" })
+                    end)
+                end
+
+                task.wait(0.1)
+            end
+        end)
+    end,
+})
+
+-- ========================
+-- TRAITS TAB
+-- ========================
+TraitsTab:Section({ Title = "Card & Trait Selection" })
+
+local TraitCardDropdown = TraitsTab:Dropdown({
+    Title    = "Select Card For Roll Traits",
+    Desc     = "Pick a card from Backpack to trait-roll",
+    Values   = initialCards,
+    Flag     = "selectedCardTrait",
+    Callback = function(v) SelectedCardForTrait = v end,
+})
+SelectedCardForTrait = initialCards[1] ~= "None" and initialCards[1] or nil
+
+TraitsTab:Button({
+    Title = "Refresh Card List",
+    Desc  = "Re-scan Backpack and Character for latest cards",
+    Icon  = "refresh-cw",
+    Callback = function()
+        local cards = GetCardList()
+        RefreshDropdown(TraitCardDropdown, cards)
+
+        if cards[1] and cards[1] ~= "None" then
+            SelectedCardForTrait = cards[1]
+            pcall(function() TraitCardDropdown:SetValue(cards[1]) end)
+        else
+            SelectedCardForTrait = nil
+        end
+
+        WindUI:Notify({
+            Title   = "Refreshed ✅",
+            Content = "Found " .. #cards .. " card(s) in Backpack",
+            Duration = 3,
+            Icon    = "check",
+        })
+    end,
+})
+
+TraitsTab:Dropdown({
+    Title    = "Select Target Trait",
+    Desc     = "Stops when card trait gradient matches target trait color",
+    Values   = TraitList,
+    Flag     = "selectedTrait",
+    Callback = function(v) SelectedTrait = v end,
+})
+SelectedTrait = TraitList[1] ~= "None" and TraitList[1] or nil
+
+TraitsTab:Divider()
+TraitsTab:Section({ Title = "Auto Trait Roll" })
+
+local TraitToggle
+TraitToggle = TraitsTab:Toggle({
+    Title = "Auto Roll Traits",
+    Desc  = "Rolls card trait until target trait color is matched",
+    Flag  = "autoTrait",
+    Callback = function(v)
+        AutoTraitEnabled = v
+        if not v then return end
+        task.spawn(function()
+            local GradeRollRE = nil
+            pcall(function() GradeRollRE = ReplicatedStorage.Remotes.GradeRollRE end)
+
+            while AutoTraitEnabled do
+                if not SelectedCardForTrait or SelectedCardForTrait == "None" then
+                    WindUI:Notify({ Title = "Warning", Content = "Select a card first!", Duration = 3, Icon = "alert-circle" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                if not SelectedTrait or SelectedTrait == "None" then
+                    WindUI:Notify({ Title = "Warning", Content = "Select a target trait first!", Duration = 3, Icon = "alert-circle" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                local tool = (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild(SelectedCardForTrait))
+                    or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild(SelectedCardForTrait))
+
+                if not tool then
+                    WindUI:Notify({ Title = "Error", Content = SelectedCardForTrait .. " not found!", Duration = 3, Icon = "x" })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                -- ตรวจจับสี UIGradient
+                if CheckSmartTrait(SelectedCardForTrait, SelectedTrait) then
+                    WindUI:Notify({
+                        Title    = "Trait Reached! ✅",
+                        Content  = SelectedCardForTrait .. " → " .. tostring(SelectedTrait),
+                        Duration = 6,
+                        Icon     = "check-circle",
+                    })
+                    AutoTraitEnabled = false
+                    pcall(function() TraitToggle:SetValue(false) end)
+                    break
+                end
+
+                if GradeRollRE then
+                    pcall(function()
+                        pcall:FireServer("RollTrait", { Tool = tool, Currency = "Cash" })
                     end)
                 end
 
