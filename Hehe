@@ -1,0 +1,238 @@
+-- [[ Divinex | Resources Inc. V1 ]]
+-- UI Library: WindUI Official Latest Release
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- Remote Event Checker (For Secret Codes)
+local function getRemoteEvent()
+    local success, event = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("Others", 5):WaitForChild("Codes", 5)
+    end)
+    return success and event or nil
+end
+
+-- Create Main Window
+local Window = WindUI:CreateWindow({
+    Title = "Divinex | Resources Inc. V1",
+    Icon = "rbxassetid://10723415693",
+    Author = "Divinex Team",
+    Folder = "DivinexResources",
+    Size = UDim2.fromOffset(620, 460),
+    Transparent = true,
+    Theme = "Dark",
+    SideBarWidth = 200,
+    HasOutline = true
+})
+
+-- ==========================================
+-- 1. SECRET CODES TAB (With 2s Delay)
+-- ==========================================
+local CodesTab = Window:Tab({
+    Title = "Secret Codes",
+    Icon = "code"
+})
+
+local function redeemCode(codeText)
+    if not codeText or codeText == "" then return end
+    
+    local Remote = getRemoteEvent()
+    if Remote then
+        Remote:FireServer(codeText)
+        WindUI:Notify({
+            Title = "Redeem Attempted",
+            Content = "Fired Code: " .. tostring(codeText),
+            Duration = 3
+        })
+    else
+        WindUI:Notify({
+            Title = "Error",
+            Content = "RemoteEvent 'Remotes.Others.Codes' not found!",
+            Duration = 4
+        })
+    end
+end
+
+local function scanAndRedeem()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then 
+        WindUI:Notify({ Title = "Error", Content = "PlayerGui not found!", Duration = 3 })
+        return 
+    end
+
+    local foundCodes = {}
+    local targets = {
+        playerGui:FindFirstChild("SecretCodes"),
+        playerGui:FindFirstChild("SecretCodes") and playerGui.SecretCodes:FindFirstChild("Codes")
+    }
+
+    local count = 0
+    for _, parentObj in ipairs(targets) do
+        if parentObj then
+            for _, child in ipairs(parentObj:GetChildren()) do
+                local extractedCode = nil
+
+                if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+                    if child.Text ~= "" then extractedCode = child.Text end
+                elseif child:IsA("StringValue") then
+                    if child.Value ~= "" then extractedCode = child.Value end
+                else
+                    extractedCode = child.Name
+                end
+
+                if extractedCode and not foundCodes[extractedCode] then
+                    foundCodes[extractedCode] = true
+                    count = count + 1
+                    redeemCode(extractedCode)
+                    
+                    -- ปรับ Delay เป็น 2 วินาที ตามที่ขอครับ!
+                    task.wait(2)
+                end
+            end
+        end
+    end
+
+    if count == 0 then
+        WindUI:Notify({
+            Title = "Scan Complete",
+            Content = "No valid codes found in SecretCodes GUI.",
+            Duration = 3
+        })
+    else
+        WindUI:Notify({
+            Title = "Scan Complete",
+            Content = "Scanned and executed " .. tostring(count) .. " code(s) with 2s delay!",
+            Duration = 4
+        })
+    end
+end
+
+CodesTab:Section({ Title = "Code System Tester" })
+
+CodesTab:Button({
+    Title = "Scan & Auto-Redeem All Codes (2s Delay)",
+    Desc = "Scans SecretCodes & SecretCodes.Codes folder",
+    Callback = function()
+        scanAndRedeem()
+    end
+})
+
+CodesTab:Input({
+    Title = "Manual Code Redeem",
+    Desc = "Enter code directly to fire server",
+    Placeholder = "Enter code here...",
+    ClearTextOnFocus = false,
+    Callback = function(text)
+        if text and text ~= "" then
+            redeemCode(text)
+        end
+    end
+})
+
+-- ==========================================
+-- 2. DYNAMIC REMOTES SCANNER & UI GENERATOR
+-- ==========================================
+
+-- รายชื่อ Remote Folders ที่ต้องการสแกนวิเคราะห์
+local remoteFolderTargets = {
+    { Name = "Summer Features", Path = {"Remotes", "SummerFeatures"}, Icon = "sun" },
+    { Name = "Other Features", Path = {"Remotes", "Others"}, Icon = "layers" },
+    { Name = "Main Features", Path = {"Remotes", "Features"}, Icon = "cpu" }
+}
+
+local function findFolderByPath(pathArray)
+    local current = ReplicatedStorage
+    for _, name in ipairs(pathArray) do
+        current = current:FindFirstChild(name)
+        if not current then return nil end
+    end
+    return current
+end
+
+-- ฟังก์ชันจำแนกและสร้างปุ่ม Dynamic Remotes
+for _, category in ipairs(remoteFolderTargets) do
+    local targetFolder = findFolderByPath(category.Path)
+    
+    local DynamicTab = Window:Tab({
+        Title = category.Name,
+        Icon = category.Icon
+    })
+    
+    DynamicTab:Section({ Title = category.Name .. " Remotes" })
+
+    if targetFolder then
+        local items = targetFolder:GetChildren()
+        if #items == 0 then
+            DynamicTab:Paragraph({
+                Title = "Empty Folder",
+                Content = "No RemoteEvents or RemoteFunctions found inside " .. category.Name
+            })
+        else
+            for _, item in ipairs(items) do
+                if item:IsA("RemoteEvent") then
+                    DynamicTab:Button({
+                        Title = "Fire: " .. item.Name,
+                        Desc = "Type: RemoteEvent | Click to FireServer()",
+                        Callback = function()
+                            pcall(function()
+                                item:FireServer()
+                            end)
+                            WindUI:Notify({
+                                Title = "Remote Triggered",
+                                Content = "Fired RemoteEvent: " .. item.Name,
+                                Duration = 2
+                            })
+                        end
+                    })
+                elseif item:IsA("RemoteFunction") then
+                    DynamicTab:Button({
+                        Title = "Invoke: " .. item.Name,
+                        Desc = "Type: RemoteFunction | Click to InvokeServer()",
+                        Callback = function()
+                            local success, result = pcall(function()
+                                return item:InvokeServer()
+                            end)
+                            WindUI:Notify({
+                                Title = "Remote Invoked",
+                                Content = success and ("Returned: " .. tostring(result)) or "Failed to Invoke",
+                                Duration = 3
+                            })
+                        end
+                    })
+                end
+            end
+        end
+    else
+        DynamicTab:Paragraph({
+            Title = "Folder Not Found",
+            Content = "Could not locate path: ReplicatedStorage." .. table.concat(category.Path, ".")
+        })
+    end
+end
+
+-- ==========================================
+-- 3. SETTINGS TAB
+-- ==========================================
+local SettingTab = Window:Tab({
+    Title = "Settings",
+    Icon = "settings"
+})
+
+SettingTab:Keybind({
+    Title = "Toggle Window UI",
+    Desc = "Key to show/hide interface",
+    Value = "RightControl",
+    Callback = function()
+        Window:Toggle()
+    end
+})
+
+WindUI:Notify({
+    Title = "Divinex V1 Loaded",
+    Content = "All remotes successfully analyzed and tabs generated!",
+    Duration = 4
+})
