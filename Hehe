@@ -143,7 +143,7 @@ local CoconutTab = Window:Tab({
 CoconutTab:Section({ Title = "Auto Teleport Coconut" })
 
 local autoCoconutState = false
-local teleportDelay = 0.5 -- ระยะเวลาคอยระหว่างวาปแต่ละจุด
+local teleportDelay = 0.1 -- ระยะเวลาคอยระหว่างวาปแต่ละจุด
 
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
