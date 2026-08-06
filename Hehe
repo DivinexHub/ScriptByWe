@@ -9,10 +9,17 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
--- Remote Event Checker (For Secret Codes)
-local function getRemoteEvent()
+-- Remote Event Checkers
+local function getCodesRemote()
     local success, event = pcall(function()
         return ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("Others", 5):WaitForChild("Codes", 5)
+    end)
+    return success and event or nil
+end
+
+local function getUpgradesRemote()
+    local success, event = pcall(function()
+        return ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("Others", 5):WaitForChild("Upgrades", 5)
     end)
     return success and event or nil
 end
@@ -23,7 +30,7 @@ local Window = WindUI:CreateWindow({
     Icon = "rbxassetid://10723415693",
     Author = "Divinex Team",
     Folder = "DivinexResources",
-    Size = UDim2.fromOffset(580, 420),
+    Size = UDim2.fromOffset(580, 460),
     Transparent = true,
     Theme = "Dark",
     SideBarWidth = 200,
@@ -41,7 +48,7 @@ local CodesTab = Window:Tab({
 local function redeemCode(codeText)
     if not codeText or codeText == "" then return end
     
-    local Remote = getRemoteEvent()
+    local Remote = getCodesRemote()
     if Remote then
         Remote:FireServer(codeText)
         WindUI:Notify({
@@ -133,17 +140,18 @@ CodesTab:Input({
 })
 
 -- ==========================================
--- 2. COCONUT TAB (Auto Loop Teleport)
+-- 2. COCONUT TAB (Auto Loop & Upgrades)
 -- ==========================================
 local CoconutTab = Window:Tab({
     Title = "Coconut",
     Icon = "tree-palm"
 })
 
+-- --- SECTION: AUTO TELEPORT ---
 CoconutTab:Section({ Title = "Auto Teleport Coconut" })
 
 local autoCoconutState = false
-local teleportDelay = 0.1 -- ระยะเวลาคอยระหว่างวาปแต่ละจุด
+local teleportDelay = 0.5 -- ปรับเปลี่ยนความเร็วได้จาก Slider บน UI
 
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
@@ -218,14 +226,83 @@ CoconutTab:Toggle({
 })
 
 CoconutTab:Slider({
-    Title = "Teleport Delay (Seconds)",
-    Desc = "Adjust speed between each teleport",
+    Title = "Teleport Speed (Delay)",
+    Desc = "Adjust delay time between teleports (Seconds)",
     Min = 0.1,
-    Max = 3,
+    Max = 3.0,
     Value = 0.5,
     Step = 0.1,
     Callback = function(val)
         teleportDelay = val
+    end
+})
+
+-- --- SECTION: AUTO UPGRADES ---
+CoconutTab:Section({ Title = "Auto Upgrades System" })
+
+local autoMultiState = false
+local autoStockState = false
+local autoSpeedState = false
+
+-- Function หลักสำหรับส่งคำสั่ง Upgrade
+local function fireUpgrade(upgradeName)
+    local Remote = getUpgradesRemote()
+    if Remote then
+        Remote:FireServer(upgradeName, "Max")
+    end
+end
+
+-- 1. Auto Multi Coconut
+CoconutTab:Toggle({
+    Title = "Auto Multi Coconut",
+    Desc = "Upgrades CoconutsUpgrade1 to Max automatically",
+    Value = false,
+    Callback = function(state)
+        autoMultiState = state
+        if autoMultiState then
+            task.spawn(function()
+                while autoMultiState do
+                    fireUpgrade("CoconutsUpgrade1")
+                    task.wait(0.5) -- ความถี่ในการยิงซื้อยศ
+                end
+            end)
+        end
+    end
+})
+
+-- 2. Auto Stock Max
+CoconutTab:Toggle({
+    Title = "Auto Stock Max",
+    Desc = "Upgrades CoconutsUpgrade2 to Max automatically",
+    Value = false,
+    Callback = function(state)
+        autoStockState = state
+        if autoStockState then
+            task.spawn(function()
+                while autoStockState do
+                    fireUpgrade("CoconutsUpgrade2")
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+-- 3. Auto Speed Coconut
+CoconutTab:Toggle({
+    Title = "Auto Speed Coconut",
+    Desc = "Upgrades CoconutsUpgrade3 to Max automatically",
+    Value = false,
+    Callback = function(state)
+        autoSpeedState = state
+        if autoSpeedState then
+            task.spawn(function()
+                while autoSpeedState do
+                    fireUpgrade("CoconutsUpgrade3")
+                    task.wait(0.5)
+                end
+            end)
+        end
     end
 })
 
@@ -248,6 +325,6 @@ SettingTab:Keybind({
 
 WindUI:Notify({
     Title = "Divinex V1 Loaded",
-    Content = "Cleaned up remotes section successfully!",
+    Content = "Auto Upgrades added successfully!",
     Duration = 3
 })
