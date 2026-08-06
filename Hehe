@@ -217,6 +217,18 @@ CoconutTab:Toggle({
     end
 })
 
+CoconutTab:Slider({
+    Title = "Teleport Delay (Seconds)",
+    Desc = "Adjust speed between each teleport",
+    Min = 0.1,
+    Max = 3,
+    Value = 0.5,
+    Step = 0.1,
+    Callback = function(val)
+        teleportDelay = val
+    end
+})
+
 -- ==========================================
 -- 3. SETTINGS TAB
 -- ==========================================
