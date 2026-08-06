@@ -151,7 +151,7 @@ local CoconutTab = Window:Tab({
 CoconutTab:Section({ Title = "Auto Teleport Coconut" })
 
 local autoCoconutState = false
-local teleportDelay = 0.5 -- ปรับเปลี่ยนความเร็วได้จาก Slider บน UI
+local teleportDelay = 0.1 -- ปรับเปลี่ยนความเร็วได้จาก Slider บน UI
 
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
