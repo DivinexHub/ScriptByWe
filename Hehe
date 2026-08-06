@@ -30,7 +30,7 @@ local Window = WindUI:CreateWindow({
     Icon = "rbxassetid://10723415693",
     Author = "Divinex Team",
     Folder = "DivinexResources",
-    Size = UDim2.fromOffset(580, 460),
+    Size = UDim2.fromOffset(580, 500),
     Transparent = true,
     Theme = "Dark",
     SideBarWidth = 200,
@@ -96,7 +96,7 @@ local function scanAndRedeem()
                     foundCodes[extractedCode] = true
                     count = count + 1
                     redeemCode(extractedCode)
-                    task.wait(2) -- Delay 2 วินาที
+                    task.wait(2)
                 end
             end
         end
@@ -151,7 +151,7 @@ local CoconutTab = Window:Tab({
 CoconutTab:Section({ Title = "Auto Teleport Coconut" })
 
 local autoCoconutState = false
-local teleportDelay = 0.1 -- ปรับเปลี่ยนความเร็วได้จาก Slider บน UI
+local teleportDelay = 0.1
 
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
@@ -169,7 +169,7 @@ end
 CoconutTab:Toggle({
     Title = "Auto Teleport Loop",
     Desc = "Teleports continuously to objects in COCONUTSSPAWN",
-    Value = false,
+    Default = false,
     Callback = function(state)
         autoCoconutState = state
         
@@ -230,7 +230,7 @@ CoconutTab:Slider({
     Desc = "Adjust delay time between teleports (Seconds)",
     Min = 0.1,
     Max = 3.0,
-    Value = 0.5,
+    Default = 0.1,
     Step = 0.1,
     Callback = function(val)
         teleportDelay = val
@@ -244,7 +244,6 @@ local autoMultiState = false
 local autoStockState = false
 local autoSpeedState = false
 
--- Function หลักสำหรับส่งคำสั่ง Upgrade
 local function fireUpgrade(upgradeName)
     local Remote = getUpgradesRemote()
     if Remote then
@@ -256,14 +255,14 @@ end
 CoconutTab:Toggle({
     Title = "Auto Multi Coconut",
     Desc = "Upgrades CoconutsUpgrade1 to Max automatically",
-    Value = false,
+    Default = false,
     Callback = function(state)
         autoMultiState = state
         if autoMultiState then
             task.spawn(function()
                 while autoMultiState do
                     fireUpgrade("CoconutsUpgrade1")
-                    task.wait(0.5) -- ความถี่ในการยิงซื้อยศ
+                    task.wait(0.5)
                 end
             end)
         end
@@ -274,7 +273,7 @@ CoconutTab:Toggle({
 CoconutTab:Toggle({
     Title = "Auto Stock Max",
     Desc = "Upgrades CoconutsUpgrade2 to Max automatically",
-    Value = false,
+    Default = false,
     Callback = function(state)
         autoStockState = state
         if autoStockState then
@@ -292,7 +291,7 @@ CoconutTab:Toggle({
 CoconutTab:Toggle({
     Title = "Auto Speed Coconut",
     Desc = "Upgrades CoconutsUpgrade3 to Max automatically",
-    Value = false,
+    Default = false,
     Callback = function(state)
         autoSpeedState = state
         if autoSpeedState then
@@ -325,6 +324,6 @@ SettingTab:Keybind({
 
 WindUI:Notify({
     Title = "Divinex V1 Loaded",
-    Content = "Auto Upgrades added successfully!",
+    Content = "Auto Upgrades Toggles Fixed!",
     Duration = 3
 })
