@@ -6,6 +6,7 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 -- Services
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
 -- Remote Event Checker (For Secret Codes)
@@ -22,7 +23,7 @@ local Window = WindUI:CreateWindow({
     Icon = "rbxassetid://10723415693",
     Author = "Divinex Team",
     Folder = "DivinexResources",
-    Size = UDim2.fromOffset(620, 460),
+    Size = UDim2.fromOffset(580, 420),
     Transparent = true,
     Theme = "Dark",
     SideBarWidth = 200,
@@ -88,9 +89,7 @@ local function scanAndRedeem()
                     foundCodes[extractedCode] = true
                     count = count + 1
                     redeemCode(extractedCode)
-                    
-                    -- ปรับ Delay เป็น 2 วินาที ตามที่ขอครับ!
-                    task.wait(2)
+                    task.wait(2) -- Delay 2 วินาที
                 end
             end
         end
@@ -134,85 +133,89 @@ CodesTab:Input({
 })
 
 -- ==========================================
--- 2. DYNAMIC REMOTES SCANNER & UI GENERATOR
+-- 2. COCONUT TAB (Auto Loop Teleport)
 -- ==========================================
+local CoconutTab = Window:Tab({
+    Title = "Coconut",
+    Icon = "tree-palm"
+})
 
--- รายชื่อ Remote Folders ที่ต้องการสแกนวิเคราะห์
-local remoteFolderTargets = {
-    { Name = "Summer Features", Path = {"Remotes", "SummerFeatures"}, Icon = "sun" },
-    { Name = "Other Features", Path = {"Remotes", "Others"}, Icon = "layers" },
-    { Name = "Main Features", Path = {"Remotes", "Features"}, Icon = "cpu" }
-}
+CoconutTab:Section({ Title = "Auto Teleport Coconut" })
 
-local function findFolderByPath(pathArray)
-    local current = ReplicatedStorage
-    for _, name in ipairs(pathArray) do
-        current = current:FindFirstChild(name)
-        if not current then return nil end
-    end
-    return current
-end
+local autoCoconutState = false
+local teleportDelay = 0.5 -- ระยะเวลาคอยระหว่างวาปแต่ละจุด
 
--- ฟังก์ชันจำแนกและสร้างปุ่ม Dynamic Remotes
-for _, category in ipairs(remoteFolderTargets) do
-    local targetFolder = findFolderByPath(category.Path)
-    
-    local DynamicTab = Window:Tab({
-        Title = category.Name,
-        Icon = category.Icon
-    })
-    
-    DynamicTab:Section({ Title = category.Name .. " Remotes" })
-
-    if targetFolder then
-        local items = targetFolder:GetChildren()
-        if #items == 0 then
-            DynamicTab:Paragraph({
-                Title = "Empty Folder",
-                Content = "No RemoteEvents or RemoteFunctions found inside " .. category.Name
-            })
+local function getObjectCFrame(obj)
+    if obj:IsA("BasePart") then
+        return obj.CFrame
+    elseif obj:IsA("Model") then
+        if obj.PrimaryPart then
+            return obj.PrimaryPart.CFrame
         else
-            for _, item in ipairs(items) do
-                if item:IsA("RemoteEvent") then
-                    DynamicTab:Button({
-                        Title = "Fire: " .. item.Name,
-                        Desc = "Type: RemoteEvent | Click to FireServer()",
-                        Callback = function()
-                            pcall(function()
-                                item:FireServer()
-                            end)
-                            WindUI:Notify({
-                                Title = "Remote Triggered",
-                                Content = "Fired RemoteEvent: " .. item.Name,
-                                Duration = 2
-                            })
-                        end
-                    })
-                elseif item:IsA("RemoteFunction") then
-                    DynamicTab:Button({
-                        Title = "Invoke: " .. item.Name,
-                        Desc = "Type: RemoteFunction | Click to InvokeServer()",
-                        Callback = function()
-                            local success, result = pcall(function()
-                                return item:InvokeServer()
-                            end)
-                            WindUI:Notify({
-                                Title = "Remote Invoked",
-                                Content = success and ("Returned: " .. tostring(result)) or "Failed to Invoke",
-                                Duration = 3
-                            })
-                        end
-                    })
-                end
-            end
+            return obj:GetPivot()
         end
-    else
-        DynamicTab:Paragraph({
-            Title = "Folder Not Found",
-            Content = "Could not locate path: ReplicatedStorage." .. table.concat(category.Path, ".")
-        })
     end
+    return nil
 end
+
+CoconutTab:Toggle({
+    Title = "Auto Teleport Loop",
+    Desc = "Teleports continuously to objects in COCONUTSSPAWN",
+    Value = false,
+    Callback = function(state)
+        autoCoconutState = state
+        
+        if autoCoconutState then
+            WindUI:Notify({
+                Title = "Coconut Auto Loop",
+                Content = "Auto Teleport Started!",
+                Duration = 2
+            })
+            
+            task.spawn(function()
+                while autoCoconutState do
+                    local spawnFolder = Workspace:FindFirstChild("World")
+                    if spawnFolder then spawnFolder = spawnFolder:FindFirstChild("SummerFeatures") end
+                    if spawnFolder then spawnFolder = spawnFolder:FindFirstChild("COCONUTSSPAWN") end
+
+                    if spawnFolder then
+                        local items = spawnFolder:GetChildren()
+                        if #items > 0 then
+                            for _, item in ipairs(items) do
+                                if not autoCoconutState then break end
+                                
+                                local character = LocalPlayer.Character
+                                local hrp = character and character:FindFirstChild("HumanoidRootPart")
+                                local targetCFrame = getObjectCFrame(item)
+
+                                if hrp and targetCFrame then
+                                    hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+                                    task.wait(teleportDelay)
+                                end
+                            end
+                        else
+                            task.wait(1)
+                        end
+                    else
+                        WindUI:Notify({
+                            Title = "Warning",
+                            Content = "Workspace.World.SummerFeatures.COCONUTSSPAWN not found!",
+                            Duration = 3
+                        })
+                        task.wait(2)
+                    end
+                    task.wait(0.1)
+                end
+            end)
+        else
+            WindUI:Notify({
+                Title = "Coconut Auto Loop",
+                Content = "Auto Teleport Stopped!",
+                Duration = 2
+            })
+        end
+    end
+})
 
 -- ==========================================
 -- 3. SETTINGS TAB
@@ -233,6 +236,6 @@ SettingTab:Keybind({
 
 WindUI:Notify({
     Title = "Divinex V1 Loaded",
-    Content = "All remotes successfully analyzed and tabs generated!",
-    Duration = 4
+    Content = "Cleaned up remotes section successfully!",
+    Duration = 3
 })
