@@ -1,0 +1,246 @@
+-- [[ DropsClient Inspector & Loop Auto Farm ]]
+-- UI Library: WindUI
+
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+-- Services
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local LocalPlayer = Players.LocalPlayer
+
+-- Variables
+local autoClaimDropsClient = false
+local autoLoopFarmDrops = false
+local autoEState = false
+local farmDelay = 0.2
+
+-- Create Window
+local Window = WindUI:CreateWindow({
+    Title = "DropsClient Inspector & Auto Farm",
+    Icon = "search",
+    Author = "Inspector Tool",
+    Folder = "ItemInspector",
+    Size = UDim2.fromOffset(580, 520),
+    Transparent = true,
+    Theme = "Dark"
+})
+
+local MainTab = Window:Tab({ Title = "Drops Scanner", Icon = "package" })
+
+-- Helper Functions
+local function getObjectCFrame(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then
+        return obj.CFrame
+    elseif obj:IsA("Model") then
+        return obj.PrimaryPart and obj.PrimaryPart.CFrame or obj:GetPivot()
+    end
+    return nil
+end
+
+local function teleportTo(targetObj)
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    local targetCFrame = getObjectCFrame(targetObj)
+
+    if hrp and targetCFrame then
+        hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+    end
+end
+
+local function holdE(duration)
+    task.spawn(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(duration or 1.2)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+end
+
+local function triggerPromptsIn(parentObj)
+    for _, child in ipairs(parentObj:GetDescendants()) do
+        if child:IsA("ProximityPrompt") then
+            fireproximityprompt(child)
+        end
+    end
+end
+
+-- Process Specific DropItem
+local function processDropItem(dropItemObj)
+    if not dropItemObj then return end
+    
+    local parentName = dropItemObj.Parent and dropItemObj.Parent.Name or "Unknown"
+    
+    WindUI:Notify({
+        Title = "[DROP ITEM DETECTED]",
+        Content = "Folder: " .. parentName .. "\nItem: " .. dropItemObj.Name,
+        Duration = 3
+    })
+    
+    print("========================================")
+    print("[DROPSCLIENT ITEM FOUND]")
+    print("Parent Folder: " .. parentName)
+    print("Item Raw Name: " .. dropItemObj.Name)
+    print("Full Path: " .. dropItemObj:GetFullName())
+    print("Class Type: " .. dropItemObj.ClassName)
+    print("========================================")
+
+    if autoClaimDropsClient then
+        teleportTo(dropItemObj)
+        task.wait(0.2)
+        triggerPromptsIn(dropItemObj)
+        holdE(1.0)
+    end
+end
+
+-- Function: Collect All Items in DropsClient
+local function collectAllDrops()
+    local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
+    if not dropsClientFolder then return end
+
+    for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
+        if not autoLoopFarmDrops then break end
+        
+        local dropItemFolder = childFolder:FindFirstChild("DropItem")
+        if dropItemFolder then
+            for _, actualItem in ipairs(dropItemFolder:GetChildren()) do
+                if not autoLoopFarmDrops then break end
+                
+                teleportTo(actualItem)
+                task.wait(0.1)
+                triggerPromptsIn(actualItem)
+                holdE(0.8)
+                task.wait(farmDelay)
+            end
+        end
+    end
+end
+
+-- UI Controls
+MainTab:Section({ Title = "DropsClient Auto Farm Loop" })
+
+MainTab:Toggle({
+    Title = "Auto Farm All Drops (Continuous Loop)",
+    Desc = "วนลูปวาร์ปเก็บไอเทมทุกชิ้นใน Workspace.DropsClient ตลอดเวลา",
+    Default = false,
+    Callback = function(state)
+        autoLoopFarmDrops = state
+        if autoLoopFarmDrops then
+            WindUI:Notify({ Title = "Auto Farm", Content = "Started Auto Loop Farm!", Duration = 2 })
+            task.spawn(function()
+                while autoLoopFarmDrops do
+                    collectAllDrops()
+                    task.wait(0.5)
+                end
+            end)
+        else
+            WindUI:Notify({ Title = "Auto Farm", Content = "Stopped Auto Loop Farm!", Duration = 2 })
+        end
+    end
+})
+
+MainTab:Slider({
+    Title = "Farm Delay Speed",
+    Desc = "ระยะเวลาหน่วงระหว่างการวาร์ปเก็บแต่ละชิ้น (วินาที)",
+    Min = 0.05,
+    Max = 2.0,
+    Default = 0.2,
+    Step = 0.05,
+    Callback = function(val)
+        farmDelay = val
+    end
+})
+
+MainTab:Section({ Title = "Real-Time Detector Options" })
+
+MainTab:Toggle({
+    Title = "Auto TP & Claim When Item Appears",
+    Desc = "วาร์ปไปเก็บทันทีที่มีไอเทมดรอปใหม่เกิดขึ้น",
+    Default = false,
+    Callback = function(state)
+        autoClaimDropsClient = state
+    end
+})
+
+MainTab:Toggle({
+    Title = "Auto Hold Key E Loop",
+    Default = false,
+    Callback = function(state)
+        autoEState = state
+        if autoEState then
+            task.spawn(function()
+                while autoEState do
+                    holdE(1)
+                    task.wait(1.1)
+                end
+            end)
+        end
+    end
+})
+
+MainTab:Button({
+    Title = "Scan DropsClient Right Now",
+    Callback = function()
+        local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
+        if not dropsClientFolder then
+            WindUI:Notify({ Title = "Error", Content = "Workspace.DropsClient not found!", Duration = 3 })
+            return
+        end
+
+        local count = 0
+        for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
+            local dropItemFolder = childFolder:FindFirstChild("DropItem")
+            if dropItemFolder then
+                for _, actualItem in ipairs(dropItemFolder:GetChildren()) do
+                    count = count + 1
+                    processDropItem(actualItem)
+                end
+            end
+        end
+
+        if count == 0 then
+            WindUI:Notify({ Title = "Scan Complete", Content = "No items inside DropsClient right now.", Duration = 3 })
+        else
+            WindUI:Notify({ Title = "Scan Complete", Content = "Found " .. tostring(count) .. " item(s)!", Duration = 4 })
+        end
+    end
+})
+
+-- Real-time Watcher for DropsClient
+task.spawn(function()
+    local dropsClientFolder = Workspace:WaitForChild("DropsClient", 10)
+    if not dropsClientFolder then
+        print("[WARNING] DropsClient folder not found in Workspace yet.")
+        return
+    end
+
+    dropsClientFolder.ChildAdded:Connect(function(subFolder)
+        local dropItemFolder = subFolder:WaitForChild("DropItem", 3)
+        if dropItemFolder then
+            for _, item in ipairs(dropItemFolder:GetChildren()) do
+                processDropItem(item)
+            end
+
+            dropItemFolder.ChildAdded:Connect(function(item)
+                task.wait(0.1)
+                processDropItem(item)
+            end)
+        end
+    end)
+
+    for _, subFolder in ipairs(dropsClientFolder:GetChildren()) do
+        local dropItemFolder = subFolder:FindFirstChild("DropItem")
+        if dropItemFolder then
+            dropItemFolder.ChildAdded:Connect(function(item)
+                task.wait(0.1)
+                processDropItem(item)
+            end)
+        end
+    end
+end)
+
+WindUI:Notify({
+    Title = "DropsClient Inspector Ready",
+    Content = "Listening for items in Workspace.DropsClient...",
+    Duration = 4
+})
