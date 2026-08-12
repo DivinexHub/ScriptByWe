@@ -1,32 +1,36 @@
--- [[ DropsClient Auto Farm V5 (OR Filter Logic) ]]
+-- [[ DropsClient Auto Scanner & Dynamic Dropdown UI ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 -- Services
-local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 -- Variables
 local autoLoopFarmDrops = false
 local farmDelay = 0.2
-local targetItemNames = {}  -- รายชื่อของที่ต้องการเก็บเป็นพิเศษ
-local targetRarities = {}   -- รายชื่อ Rarity ที่ต้องการเก็บ
+local selectedRarities = {}
+local selectedItemNames = {}
+
+-- Store unique scanned data
+local scannedRarities = {}
+local scannedNames = {}
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Auto Farm V5",
-    Icon = "package",
+    Title = "DropsClient Selector Tool",
+    Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
-    Size = UDim2.fromOffset(550, 500),
+    Size = UDim2.fromOffset(580, 520),
     Transparent = true,
     Theme = "Dark"
 })
 
-local MainTab = Window:Tab({ Title = "Auto Farm Filter", Icon = "filter" })
+local MainTab = Window:Tab({ Title = "Dynamic Selector", Icon = "mouse-pointer" })
 
 -- Helper Functions
 local function getObjectCFrame(obj)
@@ -55,20 +59,6 @@ local function triggerPromptsIn(parentObj)
     end
 end
 
--- Separate words by comma
-local function parseInputList(text)
-    local list = {}
-    if not text or text == "" then return list end
-    for item in string.gmatch(text, "([^,]+)") do
-        local cleaned = string.lower(string.match(item, "^%s*(.-)%s*$"))
-        if cleaned ~= "" then
-            table.insert(list, cleaned)
-        end
-    end
-    return list
-end
-
--- Get Item Text Info
 local function getItemDetails(dropItemFolder)
     local root = dropItemFolder:FindFirstChild("Root")
     if not root then return "", "" end
@@ -85,12 +75,89 @@ local function getItemDetails(dropItemFolder)
     return name, rarity
 end
 
--- Flexible Match Checker (OR Logic)
-local function checkCanCollect(itemName, itemRarity)
-    local hasNameFilter = #targetItemNames > 0
-    local hasRarityFilter = #targetRarities > 0
+-- UI Elements Setup
+MainTab:Section({ Title = "Scanner & Dynamic Dropdowns" })
 
-    -- 1. ถ้าไม่ได้ใส่ช่องไหนเลย = เก็บหมดทุกชิ้น
+local RarityDropdown = MainTab:Dropdown({
+    Title = "Select Rarities (เลือก Rarity)",
+    Desc = "เลือก Rarity ที่ต้องการเก็บ (เลือกได้หลายอัน)",
+    Values = {"(Scan First)"},
+    Multi = true,
+    Default = {},
+    Callback = function(values)
+        selectedRarities = values or {}
+    end
+})
+
+local NameDropdown = MainTab:Dropdown({
+    Title = "Select Item Names (เลือกชื่อของ)",
+    Desc = "เลือกชื่อไอเทมที่ต้องการเก็บ (เลือกได้หลายอัน)",
+    Values = {"(Scan First)"},
+    Multi = true,
+    Default = {},
+    Callback = function(values)
+        selectedItemNames = values or {}
+    end
+})
+
+-- Scanner Function
+local function scanDropsClient()
+    local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
+    if not dropsClientFolder then
+        WindUI:Notify({ Title = "Error", Content = "Workspace.DropsClient not found!", Duration = 3 })
+        return
+    end
+
+    local foundRarityMap = {}
+    local foundNameMap = {}
+
+    for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
+        for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
+            local itemName, itemRarity = getItemDetails(dropItemFolder)
+
+            if itemRarity ~= "" and not foundRarityMap[itemRarity] then
+                foundRarityMap[itemRarity] = true
+                table.insert(scannedRarities, itemRarity)
+            end
+
+            if itemName ~= "" and not foundNameMap[itemName] then
+                foundNameMap[itemName] = true
+                table.insert(scannedNames, itemName)
+            end
+        end
+    end
+
+    -- Refresh Dropdown Options
+    if #scannedRarities > 0 then
+        RarityDropdown:SetValues(scannedRarities)
+    end
+    
+    if #scannedNames > 0 then
+        NameDropdown:SetValues(scannedNames)
+    end
+
+    WindUI:Notify({
+        Title = "Scan Completed",
+        Content = "Found " .. tostring(#scannedRarities) .. " Rarities & " .. tostring(#scannedNames) .. " Item Names!",
+        Duration = 4
+    })
+end
+
+MainTab:Button({
+    Title = "Scan Drops & Update Dropdowns",
+    Desc = "สแกนของในแมปเพื่อนำชื่อและ Rarity ทั้งหมดมาใส่ใน Dropdown",
+    Callback = function()
+        scannedRarities = {}
+        scannedNames = {}
+        scanDropsClient()
+    end
+})
+
+-- Check Logic (OR Matching)
+local function checkCanCollect(itemName, itemRarity)
+    local hasNameFilter = #selectedItemNames > 0
+    local hasRarityFilter = #selectedRarities > 0
+
     if not hasNameFilter and not hasRarityFilter then
         return true
     end
@@ -98,12 +165,9 @@ local function checkCanCollect(itemName, itemRarity)
     local nameMatched = false
     local rarityMatched = false
 
-    local nameLower = string.lower(itemName)
-    local rarityLower = string.lower(itemRarity)
-
     if hasNameFilter then
-        for _, filter in ipairs(targetItemNames) do
-            if string.find(nameLower, filter, 1, true) then
+        for _, name in ipairs(selectedItemNames) do
+            if string.find(string.lower(itemName), string.lower(name), 1, true) then
                 nameMatched = true
                 break
             end
@@ -111,19 +175,18 @@ local function checkCanCollect(itemName, itemRarity)
     end
 
     if hasRarityFilter then
-        for _, filter in ipairs(targetRarities) do
-            if string.find(rarityLower, filter, 1, true) then
+        for _, rarity in ipairs(selectedRarities) do
+            if string.find(string.lower(itemRarity), string.lower(rarity), 1, true) then
                 rarityMatched = true
                 break
             end
         end
     end
 
-    -- 2. ขอแค่ Rarity ตรง หรือ ชื่อตรง อย่างใดอย่างหนึ่งผ่าน = เก็บได้ทันที!
     return rarityMatched or nameMatched
 end
 
--- Collect Loop
+-- Auto Farm Loop
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
@@ -144,15 +207,12 @@ local function collectAllDrops()
                 local targetCFrame = getObjectCFrame(dropItemFolder)
                 
                 if hrp and targetCFrame then
-                    -- Teleport to item
                     hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
                     task.wait(0.1)
                     
-                    -- Interact
                     triggerPromptsIn(dropItemFolder)
                     holdE(0.8)
                     
-                    -- Teleport back to original position
                     if originalCFrame then
                         hrp.CFrame = originalCFrame
                     end
@@ -164,34 +224,11 @@ local function collectAllDrops()
     end
 end
 
--- UI Controls
-MainTab:Section({ Title = "Multi Filters (คั่นด้วยเครื่องหมาย ,)" })
-
-MainTab:Input({
-    Title = "Filter Rarities (ระดับความแรร์)",
-    Desc = "ขอแค่ Rarity ตรง จะเก็บทุกชิ้นทันที (เช่น Ancient, Mythic)",
-    Placeholder = "เช่น Ancient, Mythic",
-    ClearTextOnFocus = false,
-    Callback = function(text)
-        targetRarities = parseInputList(text)
-    end
-})
-
-MainTab:Input({
-    Title = "Filter Item Names (ชื่อของเสริม - Optional)",
-    Desc = "ใส่เพิ่มกรณีอยากเก็บชื่อนี้เพิ่มเติมด้วย (เช่น Eye of Stone)",
-    Placeholder = "เช่น Eye of Stone",
-    ClearTextOnFocus = false,
-    Callback = function(text)
-        targetItemNames = parseInputList(text)
-    end
-})
-
-MainTab:Section({ Title = "Auto Loop Farm Controls" })
+MainTab:Section({ Title = "Auto Farm Controls" })
 
 MainTab:Toggle({
-    Title = "Auto Farm & Return to Start",
-    Desc = "วนลูปวาร์ปเก็บไอเทมที่ตรงเงื่อนไข แล้ววาร์ปกลับจุดเดิมทันที",
+    Title = "Auto Farm Selected Items",
+    Desc = "วนลูปเก็บเฉพาะของที่เลือกใน Dropdown และวาร์ปกลับจุดเดิม",
     Default = false,
     Callback = function(state)
         autoLoopFarmDrops = state
@@ -211,7 +248,6 @@ MainTab:Toggle({
 
 MainTab:Slider({
     Title = "Farm Delay Speed",
-    Desc = "ระยะเวลาหน่วงระหว่างการเก็บแต่ละชิ้น (วินาที)",
     Min = 0.05,
     Max = 2.0,
     Default = 0.2,
@@ -221,8 +257,14 @@ MainTab:Slider({
     end
 })
 
+-- Auto-Scan once when loaded
+task.spawn(function()
+    task.wait(1)
+    scanDropsClient()
+end)
+
 WindUI:Notify({
-    Title = "Drops Filter V5 Loaded",
-    Content = "OR Filter Logic Active!",
-    Duration = 3
+    Title = "Dynamic Dropdown Selector Loaded",
+    Content = "Press 'Scan Drops' to refresh dropdown list!",
+    Duration = 4
 })
