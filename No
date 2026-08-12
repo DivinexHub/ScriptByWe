@@ -1,4 +1,4 @@
--- [[ DropsClient Auto Scanner & Dynamic Dropdown UI ]]
+-- [[ DropsClient Auto Scanner & Dynamic Dropdown UI (Fixed) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -80,8 +80,8 @@ MainTab:Section({ Title = "Scanner & Dynamic Dropdowns" })
 
 local RarityDropdown = MainTab:Dropdown({
     Title = "Select Rarities (เลือก Rarity)",
-    Desc = "เลือก Rarity ที่ต้องการเก็บ (เลือกได้หลายอัน)",
-    Values = {"(Scan First)"},
+    Desc = "เลือก Rarity ที่ต้องการเก็บ",
+    Values = {},
     Multi = true,
     Default = {},
     Callback = function(values)
@@ -91,14 +91,30 @@ local RarityDropdown = MainTab:Dropdown({
 
 local NameDropdown = MainTab:Dropdown({
     Title = "Select Item Names (เลือกชื่อของ)",
-    Desc = "เลือกชื่อไอเทมที่ต้องการเก็บ (เลือกได้หลายอัน)",
-    Values = {"(Scan First)"},
+    Desc = "เลือกชื่อไอเทมที่ต้องการเก็บ",
+    Values = {},
     Multi = true,
     Default = {},
     Callback = function(values)
         selectedItemNames = values or {}
     end
 })
+
+-- Safe Update Dropdown Helper
+local function updateDropdownOptions(dropdown, newValues)
+    if not dropdown then return end
+    
+    -- ตรวจสอบ Method การอัปเดตของ WindUI
+    if dropdown.SetValues then
+        dropdown:SetValues(newValues)
+    elseif dropdown.Refresh then
+        dropdown:Refresh(newValues)
+    elseif dropdown.Update then
+        dropdown:Update(newValues)
+    elseif dropdown.Values then
+        dropdown.Values = newValues
+    end
+end
 
 -- Scanner Function
 local function scanDropsClient()
@@ -110,6 +126,8 @@ local function scanDropsClient()
 
     local foundRarityMap = {}
     local foundNameMap = {}
+    local newRarities = {}
+    local newNames = {}
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
         for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
@@ -117,23 +135,26 @@ local function scanDropsClient()
 
             if itemRarity ~= "" and not foundRarityMap[itemRarity] then
                 foundRarityMap[itemRarity] = true
-                table.insert(scannedRarities, itemRarity)
+                table.insert(newRarities, itemRarity)
             end
 
             if itemName ~= "" and not foundNameMap[itemName] then
                 foundNameMap[itemName] = true
-                table.insert(scannedNames, itemName)
+                table.insert(newNames, itemName)
             end
         end
     end
 
-    -- Refresh Dropdown Options
+    scannedRarities = newRarities
+    scannedNames = newNames
+
+    -- อัปเดต Dropdowns
     if #scannedRarities > 0 then
-        RarityDropdown:SetValues(scannedRarities)
+        updateDropdownOptions(RarityDropdown, scannedRarities)
     end
     
     if #scannedNames > 0 then
-        NameDropdown:SetValues(scannedNames)
+        updateDropdownOptions(NameDropdown, scannedNames)
     end
 
     WindUI:Notify({
@@ -147,9 +168,9 @@ MainTab:Button({
     Title = "Scan Drops & Update Dropdowns",
     Desc = "สแกนของในแมปเพื่อนำชื่อและ Rarity ทั้งหมดมาใส่ใน Dropdown",
     Callback = function()
-        scannedRarities = {}
-        scannedNames = {}
-        scanDropsClient()
+        task.spawn(function()
+            scanDropsClient()
+        end)
     end
 })
 
@@ -259,7 +280,7 @@ MainTab:Slider({
 
 -- Auto-Scan once when loaded
 task.spawn(function()
-    task.wait(1)
+    task.wait(1.5)
     scanDropsClient()
 end)
 
