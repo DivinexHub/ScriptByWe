@@ -1,187 +1,207 @@
--- [[ CoreGui & UI Inspector + Auto Clicker ]]
+-- [[ DropsClient Auto Farm V3 (Multi-Filter & Return Position) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 -- Services
-local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
-local VirtualUser = game:GetService("VirtualUser")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 -- Variables
-local autoClickAllButtons = false
-local trackCoreGui = true
-local trackPlayerGui = true
+local autoLoopFarmDrops = false
+local farmDelay = 0.2
+local targetItemNames = {}  -- รายชื่อของที่ต้องการเก็บ
+local targetRarities = {}   -- รายชื่อ Rarity ที่ต้องการเก็บ
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "UI & CoreGui Inspector",
-    Icon = "layout",
-    Author = "Inspector Tool",
-    Folder = "UIInspector",
-    Size = UDim2.fromOffset(580, 500),
+    Title = "DropsClient Auto Farm V3",
+    Icon = "package",
+    Author = "Auto Farm Tool",
+    Folder = "DropsAutoFarm",
+    Size = UDim2.fromOffset(550, 500),
     Transparent = true,
     Theme = "Dark"
 })
 
-local MainTab = Window:Tab({ Title = "UI Inspector", Icon = "monitor" })
+local MainTab = Window:Tab({ Title = "Auto Farm Filter", Icon = "filter" })
 
 -- Helper Functions
-local function simulateClick(button)
-    if not button then return end
-    
-    -- Method 1: GuiService / Firesignal Equivalent for Roblox UI
-    for _, connection in ipairs(getconnections and getconnections(button.MouseButton1Click) or {}) do
-        connection:Fire()
+local function getObjectCFrame(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then
+        return obj.CFrame
+    elseif obj:IsA("Model") then
+        return obj.PrimaryPart and obj.PrimaryPart.CFrame or obj:GetPivot()
     end
-    for _, connection in ipairs(getconnections and getconnections(button.MouseButton1Down) or {}) do
-        connection:Fire()
-    end
-    for _, connection in ipairs(getconnections and getconnections(button.Activated) or {}) do
-        connection:Fire()
-    end
-    
-    -- Method 2: VirtualUser Backup Click
-    if button:IsA("GuiButton") and button.AbsolutePosition then
-        local pos = button.AbsolutePosition + (button.AbsoluteSize / 2)
-        VirtualUser:Button1Down(Vector2.new(pos.X, pos.Y))
-        task.wait(0.05)
-        VirtualUser:Button1Up(Vector2.new(pos.X, pos.Y))
+    return nil
+end
+
+local function holdE(duration)
+    task.spawn(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(duration or 1.2)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+end
+
+local function triggerPromptsIn(parentObj)
+    for _, child in ipairs(parentObj:GetDescendants()) do
+        if child:IsA("ProximityPrompt") then
+            fireproximityprompt(child)
+        end
     end
 end
 
-local function inspectUI(element, sourceName)
-    if not element then return end
-    
-    local textVal = ""
-    if element:IsA("TextLabel") or element:IsA("TextButton") or element:IsA("TextBox") then
-        textVal = " | Text: '" .. tostring(element.Text) .. "'"
+-- Helper for Split String (แยกคำด้วยจุลภาค ,)
+local function parseInputList(text)
+    local list = {}
+    if not text or text == "" then return list end
+    for item in string.gmatch(text, "([^,]+)") do
+        local cleaned = string.lower(string.match(item, "^%s*(.-)%s*$")) -- ลบช่องว่างส่วนเกิน
+        if cleaned ~= "" then
+            table.insert(list, cleaned)
+        end
     end
+    return list
+end
+
+-- Check Item Details (Name & Rarity)
+local function getItemDetails(dropItemFolder)
+    local root = dropItemFolder:FindFirstChild("Root")
+    if not root then return "", "" end
+
+    local dropUI = root:FindFirstChild("Drop")
+    if not dropUI then return "", "" end
+
+    local xyd = dropUI:FindFirstChild("XYD")
+    local zhName = dropUI:FindFirstChild("ZhName")
+
+    local rarity = xyd and (xyd:IsA("TextLabel") or xyd:IsA("TextBox")) and xyd.Text or ""
+    local name = zhName and (zhName:IsA("TextLabel") or zhName:IsA("TextBox")) and zhName.Text or ""
+
+    return name, rarity
+end
+
+-- Function Check Multi-Matches
+local function isMatch(itemValue, filterList)
+    if #filterList == 0 then return true end -- ถ้าไม่ได้ใส่กรองไว้ ให้ผ่านหมด
+    local valLower = string.lower(itemValue)
+    for _, filter in ipairs(filterList) do
+        if string.find(valLower, filter, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Function: Collect Filtered Items and Return
+local function collectAllDrops()
+    local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
+    if not dropsClientFolder then return end
+
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
     
-    print("========================================")
-    print("[" .. sourceName .. " DETECTED]")
-    print("Name: " .. element.Name)
-    print("Class: " .. element.ClassName .. textVal)
-    print("Full Path: " .. element:GetFullName())
-    print("Visible: " .. tostring(element.Visible))
-    print("========================================")
+    -- จำตำแหน่งเดิมก่อนเริ่มวาร์ป
+    local originalCFrame = hrp and hrp.CFrame
 
-    WindUI:Notify({
-        Title = "[" .. sourceName .. " UI]",
-        Content = "Name: " .. element.Name .. "\nClass: " .. element.ClassName .. (textVal ~= "" and textVal or ""),
-        Duration = 4
-    })
+    for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
+        if not autoLoopFarmDrops then break end
+        
+        for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
+            if not autoLoopFarmDrops then break end
+            
+            local itemName, itemRarity = getItemDetails(dropItemFolder)
 
-    if autoClickAllButtons and element:IsA("GuiButton") then
-        task.wait(0.1)
-        simulateClick(element)
+            local matchName = isMatch(itemName, targetItemNames)
+            local matchRarity = isMatch(itemRarity, targetRarities)
+
+            if matchName and matchRarity then
+                local targetCFrame = getObjectCFrame(dropItemFolder)
+                
+                if hrp and targetCFrame then
+                    -- 1. วาร์ปไปหาไอเทม
+                    hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+                    task.wait(0.1)
+                    
+                    -- 2. กดเก็บของ
+                    triggerPromptsIn(dropItemFolder)
+                    holdE(0.8)
+                    
+                    -- 3. วาร์ปกลับจุดเดิมทันที
+                    if originalCFrame then
+                        hrp.CFrame = originalCFrame
+                    end
+                    
+                    task.wait(farmDelay)
+                end
+            end
+        end
     end
 end
 
 -- UI Controls
-MainTab:Section({ Title = "CoreGui Special Check" })
+MainTab:Section({ Title = "Multi Filters (คั่นด้วยเครื่องหมาย ,)" })
 
-MainTab:Button({
-    Title = "Check TeleportEffectGui State",
-    Desc = "เช็คว่า TeleportEffectGui อยู่ใน CoreGui หรือไม่",
-    Callback = function()
-        local tpGui = CoreGui:FindFirstChild("TeleportEffectGui")
-        if tpGui then
-            WindUI:Notify({
-                Title = "TeleportEffectGui Found!",
-                Content = "Status: Present in CoreGui\nEnabled: " .. tostring(tpGui.Enabled),
-                Duration = 5
-            })
-            print("[CORE-GUI CHECK] TeleportEffectGui found: " .. tpGui:GetFullName())
-            for _, child in ipairs(tpGui:GetDescendants()) do
-                print(" -> Child: " .. child.Name .. " (" .. child.ClassName .. ")")
-            end
-        else
-            WindUI:Notify({
-                Title = "Not Found",
-                Content = "TeleportEffectGui is NOT currently in CoreGui",
-                Duration = 3
-            })
-            print("[CORE-GUI CHECK] TeleportEffectGui not found.")
-        end
+MainTab:Input({
+    Title = "Filter Item Names (ใส่หลายชื่อได้)",
+    Desc = "ตัวอย่าง: Eye of Stone, Staff Gem, Sword",
+    Placeholder = "เช่น Eye of Stone, Staff Gem",
+    ClearTextOnFocus = false,
+    Callback = function(text)
+        targetItemNames = parseInputList(text)
     end
 })
 
-MainTab:Section({ Title = "Real-time UI Detector Options" })
-
-MainTab:Toggle({
-    Title = "Track PlayerGui (Game UI & Popups)",
-    Default = true,
-    Callback = function(state)
-        trackPlayerGui = state
+MainTab:Input({
+    Title = "Filter Rarities (ใส่หลาย Rarity ได้)",
+    Desc = "ตัวอย่าง: Ancient, Mythic, Legendary",
+    Placeholder = "เช่น Ancient, Mythic",
+    ClearTextOnFocus = false,
+    Callback = function(text)
+        targetRarities = parseInputList(text)
     end
 })
 
-MainTab:Toggle({
-    Title = "Track CoreGui (System UI / Roblox Effects)",
-    Default = true,
-    Callback = function(state)
-        trackCoreGui = state
-    end
-})
+MainTab:Section({ Title = "Auto Loop Farm Controls" })
 
 MainTab:Toggle({
-    Title = "Auto Click Detected Buttons",
-    Desc = "พยายามคลิกปุ่มอัตโนมัติทันทีเมื่อมี GuiButton ใหม่ขึ้นมา",
+    Title = "Auto Farm & Return to Start",
+    Desc = "วนลูปวาร์ปเก็บไอเทมที่ตรงเงื่อนไข แล้ววาร์ปกลับจุดเดิมทันที",
     Default = false,
     Callback = function(state)
-        autoClickAllButtons = state
+        autoLoopFarmDrops = state
+        if autoLoopFarmDrops then
+            WindUI:Notify({ Title = "Auto Farm", Content = "Started Farm Loop!", Duration = 2 })
+            task.spawn(function()
+                while autoLoopFarmDrops do
+                    collectAllDrops()
+                    task.wait(0.5)
+                end
+            end)
+        else
+            WindUI:Notify({ Title = "Auto Farm", Content = "Stopped Farm Loop!", Duration = 2 })
+        end
     end
 })
 
-MainTab:Section({ Title = "Manual Scanners" })
-
-MainTab:Button({
-    Title = "Scan All Buttons in PlayerGui",
-    Callback = function()
-        local count = 0
-        for _, descendant in ipairs(PlayerGui:GetDescendants()) do
-            if descendant:IsA("GuiButton") and descendant.Visible then
-                count = count + 1
-                inspectUI(descendant, "PLAYER-GUI BUTTON")
-            end
-        end
-        WindUI:Notify({ Title = "Scan Complete", Content = "Found " .. tostring(count) .. " visible button(s).", Duration = 3 })
+MainTab:Slider({
+    Title = "Farm Delay Speed",
+    Desc = "ระยะเวลาหน่วงระหว่างการเก็บแต่ละชิ้น (วินาที)",
+    Min = 0.05,
+    Max = 2.0,
+    Default = 0.2,
+    Step = 0.05,
+    Callback = function(val)
+        farmDelay = val
     end
 })
-
--- Real-time UI Watcher
-task.spawn(function()
-    -- Watch PlayerGui
-    PlayerGui.DescendantAdded:Connect(function(descendant)
-        if trackPlayerGui then
-            task.wait(0.05)
-            inspectUI(descendant, "PLAYER-GUI")
-        end
-    end)
-
-    -- Watch CoreGui
-    CoreGui.DescendantAdded:Connect(function(descendant)
-        if trackCoreGui then
-            task.wait(0.05)
-            inspectUI(descendant, "CORE-GUI")
-            
-            -- Specific check for TeleportEffectGui
-            if descendant.Name == "TeleportEffectGui" or descendant:IsDescendantOf(CoreGui:FindFirstChild("TeleportEffectGui") or Workspace) then
-                WindUI:Notify({
-                    Title = "[TELEPORT EFFECT ACTIVE]",
-                    Content = "TeleportEffectGui triggered in CoreGui!",
-                    Duration = 5
-                })
-            end
-        end
-    end)
-end)
 
 WindUI:Notify({
-    Title = "UI Inspector Ready",
-    Content = "Monitoring PlayerGui and CoreGui...",
-    Duration = 4
+    Title = "Drops Filter V3 Loaded",
+    Content = "Multi-filter & Return Position Ready!",
+    Duration = 3
 })
