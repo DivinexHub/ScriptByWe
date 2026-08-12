@@ -21,7 +21,7 @@ local scannedNames = {}
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Selector Tool",
+    Title = "Fix Selector Tool",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
