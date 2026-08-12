@@ -1,4 +1,4 @@
--- [[ DropsClient Auto Scanner & Dynamic Dropdown UI (Fixed) ]]
+-- [[ DropsClient Static Rarity & Dynamic Name Selector ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -15,13 +15,12 @@ local farmDelay = 0.2
 local selectedRarities = {}
 local selectedItemNames = {}
 
--- Store unique scanned data
-local scannedRarities = {}
+-- Store unique scanned names
 local scannedNames = {}
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Fix Selector Tool",
+    Title = "Magic Auto Farm V7",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -30,7 +29,7 @@ local Window = WindUI:CreateWindow({
     Theme = "Dark"
 })
 
-local MainTab = Window:Tab({ Title = "Dynamic Selector", Icon = "mouse-pointer" })
+local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
 
 -- Helper Functions
 local function getObjectCFrame(obj)
@@ -76,12 +75,23 @@ local function getItemDetails(dropItemFolder)
 end
 
 -- UI Elements Setup
-MainTab:Section({ Title = "Scanner & Dynamic Dropdowns" })
+MainTab:Section({ Title = "Rarity & Item Name Selection" })
 
-local RarityDropdown = MainTab:Dropdown({
+-- Static Rarity Dropdown
+MainTab:Dropdown({
     Title = "Select Rarities (เลือก Rarity)",
-    Desc = "เลือก Rarity ที่ต้องการเก็บ",
-    Values = {},
+    Desc = "เลือก Rarity ที่ต้องการเก็บ (เลือกได้หลายอัน)",
+    Values = {
+        "Common",
+        "Uncommon",
+        "Rare",
+        "Epic",
+        "Legend",
+        "Mythical",
+        "Secret",
+        "Ancient",
+        "Supreme"
+    },
     Multi = true,
     Default = {},
     Callback = function(values)
@@ -89,9 +99,10 @@ local RarityDropdown = MainTab:Dropdown({
     end
 })
 
+-- Dynamic Name Dropdown (Scan from Map)
 local NameDropdown = MainTab:Dropdown({
-    Title = "Select Item Names (เลือกชื่อของ)",
-    Desc = "เลือกชื่อไอเทมที่ต้องการเก็บ",
+    Title = "Select Item Names (เลือกชื่อของจากการสแกน)",
+    Desc = "เลือกชื่อไอเทมที่พบในแมป (เลือกได้หลายอัน)",
     Values = {},
     Multi = true,
     Default = {},
@@ -103,8 +114,6 @@ local NameDropdown = MainTab:Dropdown({
 -- Safe Update Dropdown Helper
 local function updateDropdownOptions(dropdown, newValues)
     if not dropdown then return end
-    
-    -- ตรวจสอบ Method การอัปเดตของ WindUI
     if dropdown.SetValues then
         dropdown:SetValues(newValues)
     elseif dropdown.Refresh then
@@ -116,27 +125,20 @@ local function updateDropdownOptions(dropdown, newValues)
     end
 end
 
--- Scanner Function
-local function scanDropsClient()
+-- Scanner Function for Item Names Only
+local function scanItemNames()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then
         WindUI:Notify({ Title = "Error", Content = "Workspace.DropsClient not found!", Duration = 3 })
         return
     end
 
-    local foundRarityMap = {}
     local foundNameMap = {}
-    local newRarities = {}
     local newNames = {}
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
         for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
-            local itemName, itemRarity = getItemDetails(dropItemFolder)
-
-            if itemRarity ~= "" and not foundRarityMap[itemRarity] then
-                foundRarityMap[itemRarity] = true
-                table.insert(newRarities, itemRarity)
-            end
+            local itemName, _ = getItemDetails(dropItemFolder)
 
             if itemName ~= "" and not foundNameMap[itemName] then
                 foundNameMap[itemName] = true
@@ -145,31 +147,25 @@ local function scanDropsClient()
         end
     end
 
-    scannedRarities = newRarities
     scannedNames = newNames
 
-    -- อัปเดต Dropdowns
-    if #scannedRarities > 0 then
-        updateDropdownOptions(RarityDropdown, scannedRarities)
-    end
-    
     if #scannedNames > 0 then
         updateDropdownOptions(NameDropdown, scannedNames)
     end
 
     WindUI:Notify({
         Title = "Scan Completed",
-        Content = "Found " .. tostring(#scannedRarities) .. " Rarities & " .. tostring(#scannedNames) .. " Item Names!",
+        Content = "Found " .. tostring(#scannedNames) .. " Item Names in Map!",
         Duration = 4
     })
 end
 
 MainTab:Button({
-    Title = "Scan Drops & Update Dropdowns",
-    Desc = "สแกนของในแมปเพื่อนำชื่อและ Rarity ทั้งหมดมาใส่ใน Dropdown",
+    Title = "Scan Map Item Names",
+    Desc = "สแกนหาชื่อไอเทมในแมปแล้วนำไปอัปเดตใส่ Name Dropdown",
     Callback = function()
         task.spawn(function()
-            scanDropsClient()
+            scanItemNames()
         end)
     end
 })
@@ -249,7 +245,7 @@ MainTab:Section({ Title = "Auto Farm Controls" })
 
 MainTab:Toggle({
     Title = "Auto Farm Selected Items",
-    Desc = "วนลูปเก็บเฉพาะของที่เลือกใน Dropdown และวาร์ปกลับจุดเดิม",
+    Desc = "วนลูปเก็บเฉพาะ Rarity หรือชื่อของที่เลือกไว้ แล้ววาร์ปกลับจุดเดิม",
     Default = false,
     Callback = function(state)
         autoLoopFarmDrops = state
@@ -278,14 +274,14 @@ MainTab:Slider({
     end
 })
 
--- Auto-Scan once when loaded
+-- Auto-Scan item names once when loaded
 task.spawn(function()
     task.wait(1.5)
-    scanDropsClient()
+    scanItemNames()
 end)
 
 WindUI:Notify({
-    Title = "Dynamic Dropdown Selector Loaded",
-    Content = "Press 'Scan Drops' to refresh dropdown list!",
+    Title "Auto Farm Ready",
+    Content = "Static Rarities & Dynamic Names Loaded!",
     Duration = 4
 })
