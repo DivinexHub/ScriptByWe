@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V7 (With Player Trade System) ]]
+-- [[ DropsClient Farm V8 (Fixed Fixed-Command Player Trade) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -22,20 +22,16 @@ local scannedNames = {}
 -- Trade Variables
 local selectedTradePlayer = nil
 local playerMap = {}
+local TRADE_COMMAND_STRING = "\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82" -- ชื่อคำสั่งของเกม (Fixed)
 
 -- Settings Variables
 local noclipEnabled = false
 local discordWebhookUrl = ""
 local noclipConnection = nil
 
--- Remote Event Safety Find
-local netWorkRemoteEvent = ReplicatedStorage:FindFirstChild("Msg") 
-    and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
-    and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
-
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Magic Loot V7",
+    Title = "Magic loot New Trade V8",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -326,7 +322,7 @@ MainTab:Slider({
 -- ==========================================
 -- 2. TRADE TAB (PLAYER TRADE)
 -- ==========================================
-TradeTab:Section({ Title = "Select Target Player" })
+TradeTaToolction({ Title = "Select Target Player" })
 
 local PlayerDropdown = TradeTab:Dropdown({
     Title = "Select Player (เลือกผู้เล่น)",
@@ -379,8 +375,8 @@ TradeTab:Button({
 TradeTab:Section({ Title = "Trade Action" })
 
 TradeTab:Button({
-    Title = "Send Held Item (Trade 1 ที)",
-    Desc = "ส่งไอเทมที่ถืออยู่ในมือให้ผู้เล่นที่เลือกไว้",
+    Title = "Send Held Item (ส่งของในมือ)",
+    Desc = "ส่งไอเทมที่ถืออยู่ในมือให้ผู้เล่นที่เลือกไว้ทันที",
     Callback = function()
         if not selectedTradePlayer then
             WindUI:Notify({ Title = "Trade Error", Content = "โปรดเลือกผู้เล่นที่จะส่งของให้ก่อน!", Duration = 3 })
@@ -395,8 +391,6 @@ TradeTab:Button({
             return
         end
 
-        -- ดึง ID/String จาก Attributes/Values หรือชื่อไอเทมในมือ
-        local itemCode = tool:GetAttribute("ItemId") or tool:GetAttribute("Code") or tool.Name
         local targetUserId = selectedTradePlayer.UserId
 
         local event = ReplicatedStorage:FindFirstChild("Msg") 
@@ -405,16 +399,17 @@ TradeTab:Button({
 
         if event then
             pcall(function()
-                event:FireServer("\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82", targetUserId)
+                -- ยิงคำสั่งเทรดพร้อม UserId ของเป้าหมาย
+                event:FireServer(TRADE_COMMAND_STRING, targetUserId)
             end)
 
             WindUI:Notify({
                 Title = "Trade Sent!",
-                Content = "ส่งของ: " .. tool.Name .. "\nให้แก่: " .. selectedTradePlayer.Name,
+                Content = "ส่งของ: " .. tool.Name .. "\nให้แก่: " .. selectedTradePlayer.Name .. " (" .. tostring(targetUserId) .. ")",
                 Duration = 4
             })
         else
-            WindUI:Notify({ Title = "Trade Error", Content = "ไม่พบ NetWorkRemoteEvent ในเกม!", Duration = 3 })
+            WindUI:Notify({ Title = "Trade Error", Content = "ไม่พบ NetWorkRemoteEvent ใน ReplicatedStorage.Msg.RemoteEvent!", Duration = 3 })
         end
     end
 })
@@ -465,7 +460,7 @@ task.spawn(function()
 end)
 
 WindUI:Notify({
-    Title = "V7 Trade System Ready",
-    Content = "Player Trade Tab Added!",
+    Title = "V8 Trade Ready",
+    Content = "Fixed Command Trade Active!",
     Duration = 4
 })
