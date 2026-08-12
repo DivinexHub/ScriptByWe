@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V6 (Noclip & Discord Webhook) ]]
+-- [[ DropsClient Farm V7 (With Player Trade System) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -8,6 +8,7 @@ local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -18,23 +19,33 @@ local selectedRarities = {}
 local selectedItemNames = {}
 local scannedNames = {}
 
+-- Trade Variables
+local selectedTradePlayer = nil
+local playerMap = {}
+
 -- Settings Variables
 local noclipEnabled = false
 local discordWebhookUrl = ""
 local noclipConnection = nil
 
+-- Remote Event Safety Find
+local netWorkRemoteEvent = ReplicatedStorage:FindFirstChild("Msg") 
+    and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
+    and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
+
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Magic loot V8",
+    Title = "Magic Loot V7",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
-    Size = UDim2.fromOffset(580, 540),
+    Size = UDim2.fromOffset(580, 560),
     Transparent = true,
     Theme = "Dark"
 })
 
 local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
+local TradeTab = Window:Tab({ Title = "Player Trade", Icon = "arrow-right-left" })
 local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 -- Helper Functions
@@ -90,7 +101,7 @@ local function sendWebhookNotification(itemName, itemRarity)
     local payload = {
         embeds = {{
             title = "🎁 Item Collected!",
-            color = 65280, -- สีเขียว
+            color = 65280,
             fields = {
                 { name = "Player", value = LocalPlayer.Name, inline = true },
                 { name = "Item Name", value = itemName ~= "" and itemName or "Unknown", inline = true },
@@ -133,6 +144,19 @@ local function toggleNoclip(state)
     end
 end
 
+local function updateDropdownOptions(dropdown, newValues)
+    if not dropdown then return end
+    if dropdown.SetValues then
+        dropdown:SetValues(newValues)
+    elseif dropdown.Refresh then
+        dropdown:Refresh(newValues)
+    elseif dropdown.Update then
+        dropdown:Update(newValues)
+    elseif dropdown.Values then
+        dropdown.Values = newValues
+    end
+end
+
 -- ==========================================
 -- 1. MAIN TAB (FARM & SELECTOR)
 -- ==========================================
@@ -162,19 +186,6 @@ local NameDropdown = MainTab:Dropdown({
         selectedItemNames = values or {}
     end
 })
-
-local function updateDropdownOptions(dropdown, newValues)
-    if not dropdown then return end
-    if dropdown.SetValues then
-        dropdown:SetValues(newValues)
-    elseif dropdown.Refresh then
-        dropdown:Refresh(newValues)
-    elseif dropdown.Update then
-        dropdown:Update(newValues)
-    elseif dropdown.Values then
-        dropdown.Values = newValues
-    end
-end
 
 local function scanItemNames()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
@@ -267,7 +278,6 @@ local function collectAllDrops()
                     triggerPromptsIn(dropItemFolder)
                     holdE(0.8)
                     
-                    -- ส่ง Webhook
                     sendWebhookNotification(itemName, itemRarity)
 
                     if originalCFrame then
@@ -314,7 +324,103 @@ MainTab:Slider({
 })
 
 -- ==========================================
--- 2. SETTINGS TAB (NOCLIP & WEBHOOK)
+-- 2. TRADE TAB (PLAYER TRADE)
+-- ==========================================
+TradeTab:Section({ Title = "Select Target Player" })
+
+local PlayerDropdown = TradeTab:Dropdown({
+    Title = "Select Player (เลือกผู้เล่น)",
+    Desc = "เลือกผู้เล่นในเซิร์ฟเวอร์ที่ต้องการส่งของให้",
+    Values = {},
+    Multi = false,
+    Default = nil,
+    Callback = function(selectedName)
+        if selectedName and playerMap[selectedName] then
+            selectedTradePlayer = playerMap[selectedName]
+        else
+            selectedTradePlayer = nil
+        end
+    end
+})
+
+local function refreshPlayerList()
+    playerMap = {}
+    local playerNames = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local displayName = player.DisplayName .. " (@" .. player.Name .. ")"
+            playerMap[displayName] = player
+            table.insert(playerNames, displayName)
+        end
+    end
+
+    if #playerNames > 0 then
+        updateDropdownOptions(PlayerDropdown, playerNames)
+    else
+        updateDropdownOptions(PlayerDropdown, {"(No other players)"})
+    end
+
+    WindUI:Notify({
+        Title = "Players Refreshed",
+        Content = "Found " .. tostring(#playerNames) .. " other player(s) in server.",
+        Duration = 3
+    })
+end
+
+TradeTab:Button({
+    Title = "Refresh Players List (รีชื่อผู้เล่น)",
+    Desc = "อัปเดตรายชื่อผู้เล่นทั้งหมดในเซิร์ฟเวอร์ใหม่",
+    Callback = function()
+        refreshPlayerList()
+    end
+})
+
+TradeTab:Section({ Title = "Trade Action" })
+
+TradeTab:Button({
+    Title = "Send Held Item (Trade 1 ที)",
+    Desc = "ส่งไอเทมที่ถืออยู่ในมือให้ผู้เล่นที่เลือกไว้",
+    Callback = function()
+        if not selectedTradePlayer then
+            WindUI:Notify({ Title = "Trade Error", Content = "โปรดเลือกผู้เล่นที่จะส่งของให้ก่อน!", Duration = 3 })
+            return
+        end
+
+        local character = LocalPlayer.Character
+        local tool = character and character:FindFirstChildOfClass("Tool")
+
+        if not tool then
+            WindUI:Notify({ Title = "Trade Error", Content = "กรุณาถือไอเทมในมือก่อนกดส่ง!", Duration = 3 })
+            return
+        end
+
+        -- ดึง ID/String จาก Attributes/Values หรือชื่อไอเทมในมือ
+        local itemCode = tool:GetAttribute("ItemId") or tool:GetAttribute("Code") or tool.Name
+        local targetUserId = selectedTradePlayer.UserId
+
+        local event = ReplicatedStorage:FindFirstChild("Msg") 
+            and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
+            and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
+
+        if event then
+            pcall(function()
+                event:FireServer("\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82", targetUserId)
+            end)
+
+            WindUI:Notify({
+                Title = "Trade Sent!",
+                Content = "ส่งของ: " .. tool.Name .. "\nให้แก่: " .. selectedTradePlayer.Name,
+                Duration = 4
+            })
+        else
+            WindUI:Notify({ Title = "Trade Error", Content = "ไม่พบ NetWorkRemoteEvent ในเกม!", Duration = 3 })
+        end
+    end
+})
+
+-- ==========================================
+-- 3. SETTINGS TAB (NOCLIP & WEBHOOK)
 -- ==========================================
 SettingTab:Section({ Title = "Player Modifications" })
 
@@ -341,7 +447,6 @@ SettingTab:Input({
 
 SettingTab:Button({
     Title = "Test Webhook",
-    Desc = "ทดสอบการส่งข้อมูลไปยัง Webhook",
     Callback = function()
         if discordWebhookUrl ~= "" then
             sendWebhookNotification("Test Item", "Test Rarity")
@@ -352,14 +457,15 @@ SettingTab:Button({
     end
 })
 
--- Auto-Scan item names when loaded
+-- Auto-Scan item names and players when loaded
 task.spawn(function()
     task.wait(1.5)
     scanItemNames()
+    refreshPlayerList()
 end)
 
 WindUI:Notify({
-    Title = "V6 Loaded Successfully",
-    Content = "Settings Category with Noclip & Webhook Added!",
+    Title = "V7 Trade System Ready",
+    Content = "Player Trade Tab Added!",
     Duration = 4
 })
