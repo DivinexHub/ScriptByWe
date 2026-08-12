@@ -1,4 +1,4 @@
--- [[ DropsClient Auto Farm V3 (Multi-Filter & Return Position) ]]
+-- [[ DropsClient Auto Farm V5 (OR Filter Logic) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -12,12 +12,12 @@ local LocalPlayer = Players.LocalPlayer
 -- Variables
 local autoLoopFarmDrops = false
 local farmDelay = 0.2
-local targetItemNames = {}  -- รายชื่อของที่ต้องการเก็บ
+local targetItemNames = {}  -- รายชื่อของที่ต้องการเก็บเป็นพิเศษ
 local targetRarities = {}   -- รายชื่อ Rarity ที่ต้องการเก็บ
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Auto Farm V3",
+    Title = "DropsClient Auto Farm V5",
     Icon = "package",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -55,12 +55,12 @@ local function triggerPromptsIn(parentObj)
     end
 end
 
--- Helper for Split String (แยกคำด้วยจุลภาค ,)
+-- Separate words by comma
 local function parseInputList(text)
     local list = {}
     if not text or text == "" then return list end
     for item in string.gmatch(text, "([^,]+)") do
-        local cleaned = string.lower(string.match(item, "^%s*(.-)%s*$")) -- ลบช่องว่างส่วนเกิน
+        local cleaned = string.lower(string.match(item, "^%s*(.-)%s*$"))
         if cleaned ~= "" then
             table.insert(list, cleaned)
         end
@@ -68,7 +68,7 @@ local function parseInputList(text)
     return list
 end
 
--- Check Item Details (Name & Rarity)
+-- Get Item Text Info
 local function getItemDetails(dropItemFolder)
     local root = dropItemFolder:FindFirstChild("Root")
     if not root then return "", "" end
@@ -85,27 +85,51 @@ local function getItemDetails(dropItemFolder)
     return name, rarity
 end
 
--- Function Check Multi-Matches
-local function isMatch(itemValue, filterList)
-    if #filterList == 0 then return true end -- ถ้าไม่ได้ใส่กรองไว้ ให้ผ่านหมด
-    local valLower = string.lower(itemValue)
-    for _, filter in ipairs(filterList) do
-        if string.find(valLower, filter, 1, true) then
-            return true
+-- Flexible Match Checker (OR Logic)
+local function checkCanCollect(itemName, itemRarity)
+    local hasNameFilter = #targetItemNames > 0
+    local hasRarityFilter = #targetRarities > 0
+
+    -- 1. ถ้าไม่ได้ใส่ช่องไหนเลย = เก็บหมดทุกชิ้น
+    if not hasNameFilter and not hasRarityFilter then
+        return true
+    end
+
+    local nameMatched = false
+    local rarityMatched = false
+
+    local nameLower = string.lower(itemName)
+    local rarityLower = string.lower(itemRarity)
+
+    if hasNameFilter then
+        for _, filter in ipairs(targetItemNames) do
+            if string.find(nameLower, filter, 1, true) then
+                nameMatched = true
+                break
+            end
         end
     end
-    return false
+
+    if hasRarityFilter then
+        for _, filter in ipairs(targetRarities) do
+            if string.find(rarityLower, filter, 1, true) then
+                rarityMatched = true
+                break
+            end
+        end
+    end
+
+    -- 2. ขอแค่ Rarity ตรง หรือ ชื่อตรง อย่างใดอย่างหนึ่งผ่าน = เก็บได้ทันที!
+    return rarityMatched or nameMatched
 end
 
--- Function: Collect Filtered Items and Return
+-- Collect Loop
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
 
     local character = LocalPlayer.Character
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
-    
-    -- จำตำแหน่งเดิมก่อนเริ่มวาร์ป
     local originalCFrame = hrp and hrp.CFrame
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
@@ -116,22 +140,19 @@ local function collectAllDrops()
             
             local itemName, itemRarity = getItemDetails(dropItemFolder)
 
-            local matchName = isMatch(itemName, targetItemNames)
-            local matchRarity = isMatch(itemRarity, targetRarities)
-
-            if matchName and matchRarity then
+            if checkCanCollect(itemName, itemRarity) then
                 local targetCFrame = getObjectCFrame(dropItemFolder)
                 
                 if hrp and targetCFrame then
-                    -- 1. วาร์ปไปหาไอเทม
+                    -- Teleport to item
                     hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
                     task.wait(0.1)
                     
-                    -- 2. กดเก็บของ
+                    -- Interact
                     triggerPromptsIn(dropItemFolder)
                     holdE(0.8)
                     
-                    -- 3. วาร์ปกลับจุดเดิมทันที
+                    -- Teleport back to original position
                     if originalCFrame then
                         hrp.CFrame = originalCFrame
                     end
@@ -147,22 +168,22 @@ end
 MainTab:Section({ Title = "Multi Filters (คั่นด้วยเครื่องหมาย ,)" })
 
 MainTab:Input({
-    Title = "Filter Item Names (ใส่หลายชื่อได้)",
-    Desc = "ตัวอย่าง: Eye of Stone, Staff Gem, Sword",
-    Placeholder = "เช่น Eye of Stone, Staff Gem",
-    ClearTextOnFocus = false,
-    Callback = function(text)
-        targetItemNames = parseInputList(text)
-    end
-})
-
-MainTab:Input({
-    Title = "Filter Rarities (ใส่หลาย Rarity ได้)",
-    Desc = "ตัวอย่าง: Ancient, Mythic, Legendary",
+    Title = "Filter Rarities (ระดับความแรร์)",
+    Desc = "ขอแค่ Rarity ตรง จะเก็บทุกชิ้นทันที (เช่น Ancient, Mythic)",
     Placeholder = "เช่น Ancient, Mythic",
     ClearTextOnFocus = false,
     Callback = function(text)
         targetRarities = parseInputList(text)
+    end
+})
+
+MainTab:Input({
+    Title = "Filter Item Names (ชื่อของเสริม - Optional)",
+    Desc = "ใส่เพิ่มกรณีอยากเก็บชื่อนี้เพิ่มเติมด้วย (เช่น Eye of Stone)",
+    Placeholder = "เช่น Eye of Stone",
+    ClearTextOnFocus = false,
+    Callback = function(text)
+        targetItemNames = parseInputList(text)
     end
 })
 
@@ -201,7 +222,7 @@ MainTab:Slider({
 })
 
 WindUI:Notify({
-    Title = "Drops Filter V3 Loaded",
-    Content = "Multi-filter & Return Position Ready!",
+    Title = "Drops Filter V5 Loaded",
+    Content = "OR Filter Logic Active!",
     Duration = 3
 })
