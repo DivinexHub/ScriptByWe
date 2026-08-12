@@ -1,4 +1,4 @@
--- [[ DropsClient Static Rarity & Dynamic Name Selector ]]
+-- [[ DropsClient Farm V6 (Noclip & Discord Webhook) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -6,6 +6,8 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 -- Services
 local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -14,22 +16,26 @@ local autoLoopFarmDrops = false
 local farmDelay = 0.2
 local selectedRarities = {}
 local selectedItemNames = {}
-
--- Store unique scanned names
 local scannedNames = {}
+
+-- Settings Variables
+local noclipEnabled = false
+local discordWebhookUrl = ""
+local noclipConnection = nil
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Magic Auto Farm V7",
+    Title = "Magic loot V8",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
-    Size = UDim2.fromOffset(580, 520),
+    Size = UDim2.fromOffset(580, 540),
     Transparent = true,
     Theme = "Dark"
 })
 
 local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
+local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 -- Helper Functions
 local function getObjectCFrame(obj)
@@ -74,23 +80,70 @@ local function getItemDetails(dropItemFolder)
     return name, rarity
 end
 
--- UI Elements Setup
+-- Discord Webhook Sender
+local function sendWebhookNotification(itemName, itemRarity)
+    if discordWebhookUrl == "" or not string.find(discordWebhookUrl, "http") then return end
+
+    local requestFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not requestFunc then return end
+
+    local payload = {
+        embeds = {{
+            title = "🎁 Item Collected!",
+            color = 65280, -- สีเขียว
+            fields = {
+                { name = "Player", value = LocalPlayer.Name, inline = true },
+                { name = "Item Name", value = itemName ~= "" and itemName or "Unknown", inline = true },
+                { name = "Rarity", value = itemRarity ~= "" and itemRarity or "Unknown", inline = true }
+            },
+            timestamp = DateTime.now():ToIsoDate()
+        }}
+    }
+
+    task.spawn(function()
+        pcall(function()
+            requestFunc({
+                Url = discordWebhookUrl,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+    end)
+end
+
+-- Noclip Logic
+local function toggleNoclip(state)
+    noclipEnabled = state
+    if noclipEnabled then
+        noclipConnection = RunService.Stepped:Connect(function()
+            if LocalPlayer.Character then
+                for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end)
+    else
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+    end
+end
+
+-- ==========================================
+-- 1. MAIN TAB (FARM & SELECTOR)
+-- ==========================================
 MainTab:Section({ Title = "Rarity & Item Name Selection" })
 
--- Static Rarity Dropdown
 MainTab:Dropdown({
     Title = "Select Rarities (เลือก Rarity)",
-    Desc = "เลือก Rarity ที่ต้องการเก็บ (เลือกได้หลายอัน)",
+    Desc = "เลือก Rarity ที่ต้องการเก็บ",
     Values = {
-        "Common",
-        "Uncommon",
-        "Rare",
-        "Epic",
-        "Legend",
-        "Mythical",
-        "Secret",
-        "Ancient",
-        "Supreme"
+        "Common", "Uncommon", "Rare", "Epic",
+        "Legend", "Mythical", "Secret", "Ancient", "Supreme"
     },
     Multi = true,
     Default = {},
@@ -99,10 +152,9 @@ MainTab:Dropdown({
     end
 })
 
--- Dynamic Name Dropdown (Scan from Map)
 local NameDropdown = MainTab:Dropdown({
-    Title = "Select Item Names (เลือกชื่อของจากการสแกน)",
-    Desc = "เลือกชื่อไอเทมที่พบในแมป (เลือกได้หลายอัน)",
+    Title = "Select Item Names (เลือกชื่อของ)",
+    Desc = "เลือกชื่อไอเทมที่พบในแมป",
     Values = {},
     Multi = true,
     Default = {},
@@ -111,7 +163,6 @@ local NameDropdown = MainTab:Dropdown({
     end
 })
 
--- Safe Update Dropdown Helper
 local function updateDropdownOptions(dropdown, newValues)
     if not dropdown then return end
     if dropdown.SetValues then
@@ -125,13 +176,9 @@ local function updateDropdownOptions(dropdown, newValues)
     end
 end
 
--- Scanner Function for Item Names Only
 local function scanItemNames()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
-    if not dropsClientFolder then
-        WindUI:Notify({ Title = "Error", Content = "Workspace.DropsClient not found!", Duration = 3 })
-        return
-    end
+    if not dropsClientFolder then return end
 
     local foundNameMap = {}
     local newNames = {}
@@ -139,7 +186,6 @@ local function scanItemNames()
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
         for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
             local itemName, _ = getItemDetails(dropItemFolder)
-
             if itemName ~= "" and not foundNameMap[itemName] then
                 foundNameMap[itemName] = true
                 table.insert(newNames, itemName)
@@ -148,29 +194,21 @@ local function scanItemNames()
     end
 
     scannedNames = newNames
-
     if #scannedNames > 0 then
         updateDropdownOptions(NameDropdown, scannedNames)
     end
-
-    WindUI:Notify({
-        Title = "Scan Completed",
-        Content = "Found " .. tostring(#scannedNames) .. " Item Names in Map!",
-        Duration = 4
-    })
 end
 
 MainTab:Button({
     Title = "Scan Map Item Names",
-    Desc = "สแกนหาชื่อไอเทมในแมปแล้วนำไปอัปเดตใส่ Name Dropdown",
     Callback = function()
         task.spawn(function()
             scanItemNames()
+            WindUI:Notify({ Title = "Scan Complete", Content = "Updated item names dropdown!", Duration = 3 })
         end)
     end
 })
 
--- Check Logic (OR Matching)
 local function checkCanCollect(itemName, itemRarity)
     local hasNameFilter = #selectedItemNames > 0
     local hasRarityFilter = #selectedRarities > 0
@@ -203,7 +241,6 @@ local function checkCanCollect(itemName, itemRarity)
     return rarityMatched or nameMatched
 end
 
--- Auto Farm Loop
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
@@ -230,6 +267,9 @@ local function collectAllDrops()
                     triggerPromptsIn(dropItemFolder)
                     holdE(0.8)
                     
+                    -- ส่ง Webhook
+                    sendWebhookNotification(itemName, itemRarity)
+
                     if originalCFrame then
                         hrp.CFrame = originalCFrame
                     end
@@ -245,7 +285,6 @@ MainTab:Section({ Title = "Auto Farm Controls" })
 
 MainTab:Toggle({
     Title = "Auto Farm Selected Items",
-    Desc = "วนลูปเก็บเฉพาะ Rarity หรือชื่อของที่เลือกไว้ แล้ววาร์ปกลับจุดเดิม",
     Default = false,
     Callback = function(state)
         autoLoopFarmDrops = state
@@ -274,14 +313,53 @@ MainTab:Slider({
     end
 })
 
--- Auto-Scan item names once when loaded
+-- ==========================================
+-- 2. SETTINGS TAB (NOCLIP & WEBHOOK)
+-- ==========================================
+SettingTab:Section({ Title = "Player Modifications" })
+
+SettingTab:Toggle({
+    Title = "Noclip",
+    Desc = "เดินทะลุกำแพงและสิ่งกีดขวาง",
+    Default = false,
+    Callback = function(state)
+        toggleNoclip(state)
+    end
+})
+
+SettingTab:Section({ Title = "Discord Webhook Notification" })
+
+SettingTab:Input({
+    Title = "Discord Webhook URL",
+    Desc = "ใส่ URL Webhook เพื่อรับการแจ้งเตือนเมื่อเก็บไอเทมได้",
+    Placeholder = "https://discord.com/api/webhooks/...",
+    ClearTextOnFocus = false,
+    Callback = function(text)
+        discordWebhookUrl = text or ""
+    end
+})
+
+SettingTab:Button({
+    Title = "Test Webhook",
+    Desc = "ทดสอบการส่งข้อมูลไปยัง Webhook",
+    Callback = function()
+        if discordWebhookUrl ~= "" then
+            sendWebhookNotification("Test Item", "Test Rarity")
+            WindUI:Notify({ Title = "Webhook Test", Content = "Sent test message to Discord!", Duration = 3 })
+        else
+            WindUI:Notify({ Title = "Error", Content = "Please enter Webhook URL first!", Duration = 3 })
+        end
+    end
+})
+
+-- Auto-Scan item names when loaded
 task.spawn(function()
     task.wait(1.5)
     scanItemNames()
 end)
 
 WindUI:Notify({
-    Title "Auto Farm Ready",
-    Content = "Static Rarities & Dynamic Names Loaded!",
+    Title = "V6 Loaded Successfully",
+    Content = "Settings Category with Noclip & Webhook Added!",
     Duration = 4
 })
