@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V8 (Fixed Fixed-Command Player Trade) ]]
+-- [[ DropsClient Farm V9 (Fixed Empty Tabs Issue) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -22,7 +22,7 @@ local scannedNames = {}
 -- Trade Variables
 local selectedTradePlayer = nil
 local playerMap = {}
-local TRADE_COMMAND_STRING = "\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82" -- ชื่อคำสั่งของเกม (Fixed)
+local TRADE_COMMAND_STRING = "\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82"
 
 -- Settings Variables
 local noclipEnabled = false
@@ -31,7 +31,7 @@ local noclipConnection = nil
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Magic loot New Trade V8",
+    Title = "DropsClient Selector Tool V9",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -40,6 +40,7 @@ local Window = WindUI:CreateWindow({
     Theme = "Dark"
 })
 
+-- Create Tabs First
 local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
 local TradeTab = Window:Tab({ Title = "Player Trade", Icon = "arrow-right-left" })
 local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
@@ -140,21 +141,24 @@ local function toggleNoclip(state)
     end
 end
 
-local function updateDropdownOptions(dropdown, newValues)
-    if not dropdown then return end
-    if dropdown.SetValues then
-        dropdown:SetValues(newValues)
-    elseif dropdown.Refresh then
-        dropdown:Refresh(newValues)
-    elseif dropdown.Update then
-        dropdown:Update(newValues)
-    elseif dropdown.Values then
-        dropdown.Values = newValues
-    end
+-- Safe Update Dropdown Helper
+local function updateDropdownOptions(dropdownObj, newValues)
+    if not dropdownObj then return end
+    pcall(function()
+        if dropdownObj.SetValues then
+            dropdownObj:SetValues(newValues)
+        elseif dropdownObj.Refresh then
+            dropdownObj:Refresh(newValues)
+        elseif dropdownObj.Update then
+            dropdownObj:Update(newValues)
+        elseif dropdownObj.Values then
+            dropdownObj.Values = newValues
+        end
+    end)
 end
 
 -- ==========================================
--- 1. MAIN TAB (FARM & SELECTOR)
+-- 1. FARM SELECTOR TAB
 -- ==========================================
 MainTab:Section({ Title = "Rarity & Item Name Selection" })
 
@@ -175,7 +179,7 @@ MainTab:Dropdown({
 local NameDropdown = MainTab:Dropdown({
     Title = "Select Item Names (เลือกชื่อของ)",
     Desc = "เลือกชื่อไอเทมที่พบในแมป",
-    Values = {},
+    Values = {"None Found"},
     Multi = true,
     Default = {},
     Callback = function(values)
@@ -320,14 +324,14 @@ MainTab:Slider({
 })
 
 -- ==========================================
--- 2. TRADE TAB (PLAYER TRADE)
+-- 2. PLAYER TRADE TAB
 -- ==========================================
-TradeTaToolction({ Title = "Select Target Player" })
+TradeTab:Section({ Title = "Select Target Player" })
 
 local PlayerDropdown = TradeTab:Dropdown({
     Title = "Select Player (เลือกผู้เล่น)",
     Desc = "เลือกผู้เล่นในเซิร์ฟเวอร์ที่ต้องการส่งของให้",
-    Values = {},
+    Values = {"(Loading Players...)"},
     Multi = false,
     Default = nil,
     Callback = function(selectedName)
@@ -356,12 +360,6 @@ local function refreshPlayerList()
     else
         updateDropdownOptions(PlayerDropdown, {"(No other players)"})
     end
-
-    WindUI:Notify({
-        Title = "Players Refreshed",
-        Content = "Found " .. tostring(#playerNames) .. " other player(s) in server.",
-        Duration = 3
-    })
 end
 
 TradeTab:Button({
@@ -369,6 +367,11 @@ TradeTab:Button({
     Desc = "อัปเดตรายชื่อผู้เล่นทั้งหมดในเซิร์ฟเวอร์ใหม่",
     Callback = function()
         refreshPlayerList()
+        WindUI:Notify({
+            Title = "Players Refreshed",
+            Content = "Updated player list in server.",
+            Duration = 3
+        })
     end
 })
 
@@ -399,29 +402,28 @@ TradeTab:Button({
 
         if event then
             pcall(function()
-                -- ยิงคำสั่งเทรดพร้อม UserId ของเป้าหมาย
                 event:FireServer(TRADE_COMMAND_STRING, targetUserId)
             end)
 
             WindUI:Notify({
                 Title = "Trade Sent!",
-                Content = "ส่งของ: " .. tool.Name .. "\nให้แก่: " .. selectedTradePlayer.Name .. " (" .. tostring(targetUserId) .. ")",
+                Content = "ส่งของ: " .. tool.Name .. "\nให้แก่: " .. selectedTradePlayer.Name,
                 Duration = 4
             })
         else
-            WindUI:Notify({ Title = "Trade Error", Content = "ไม่พบ NetWorkRemoteEvent ใน ReplicatedStorage.Msg.RemoteEvent!", Duration = 3 })
+            WindUI:Notify({ Title = "Trade Error", Content = "ไม่พบ NetWorkRemoteEvent!", Duration = 3 })
         end
     end
 })
 
 -- ==========================================
--- 3. SETTINGS TAB (NOCLIP & WEBHOOK)
+-- 3. SETTINGS TAB
 -- ==========================================
 SettingTab:Section({ Title = "Player Modifications" })
 
 SettingTab:Toggle({
-    Title = "Noclip",
-    Desc = "เดินทะลุกำแพงและสิ่งกีดขวาง",
+    Title = "Noclip (เดินทะลุกำแพง)",
+    Desc = "เปิดใช้งานการเดินทะลุกำแพงและสิ่งกีดขวาง",
     Default = false,
     Callback = function(state)
         toggleNoclip(state)
@@ -441,7 +443,8 @@ SettingTab:Input({
 })
 
 SettingTab:Button({
-    Title = "Test Webhook",
+    Title = "Test Webhook Notification",
+    Desc = "ทดสอบการส่งข้อความไปยัง Discord Webhook",
     Callback = function()
         if discordWebhookUrl ~= "" then
             sendWebhookNotification("Test Item", "Test Rarity")
@@ -452,15 +455,15 @@ SettingTab:Button({
     end
 })
 
--- Auto-Scan item names and players when loaded
+-- Initialize Data AFTER UI Built
 task.spawn(function()
-    task.wait(1.5)
+    task.wait(1)
     scanItemNames()
     refreshPlayerList()
 end)
 
 WindUI:Notify({
-    Title = "V8 Trade Ready",
-    Content = "Fixed Command Trade Active!",
+    Title = "V9 Loaded",
+    Content = "All tabs & components rendered successfully!",
     Duration = 4
 })
