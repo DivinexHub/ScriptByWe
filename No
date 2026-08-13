@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V11 (Priority Sorting - Highest Rarity First) ]]
+-- [[ DropsClient Farm V12 (Priority Sorting + Prompt Sniping / No Teleport) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -45,7 +45,7 @@ local noclipConnection = nil
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Selector Tool V11",
+    Title = "DropsClient Selector Tool V12",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -60,28 +60,40 @@ local TradeTab = Window:Tab({ Title = "Player Trade", Icon = "arrow-right-left" 
 local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 
 -- Helper Functions
-local function getObjectCFrame(obj)
-    if not obj then return nil end
-    if obj:IsA("BasePart") then
-        return obj.CFrame
-    elseif obj:IsA("Model") then
-        return obj.PrimaryPart and obj.PrimaryPart.CFrame or obj:GetPivot()
-    end
-    return nil
-end
-
 local function holdE(duration)
     task.spawn(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(duration or 1.2)
+        task.wait(duration or 0.8)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
     end)
 end
 
-local function triggerPromptsIn(parentObj)
+-- PROMPT SNIPING: ดึง Prompt มาที่ตัวเราชั่วคราวเพื่อยิงกด โดยไม่ต้องวาร์ป
+local function triggerPromptWithoutTP(parentObj)
+    local character = LocalPlayer.Character
+    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+    if not hrp or not parentObj then return end
+
     for _, child in ipairs(parentObj:GetDescendants()) do
         if child:IsA("ProximityPrompt") then
+            local originalParent = child.Parent
+            local originalDistance = child.MaxActivationDistance
+            local originalLineOfSight = child.RequiresLineOfSight
+
+            -- ปรับแต่ง Prompt ให้กดง่าย
+            child.RequiresLineOfSight = false
+            child.MaxActivationDistance = 999999
+            child.Parent = hrp -- ดึงมาแปะไว้ที่ HumanoidRootPart ของตัวเรา
+
+            task.wait(0.02)
             fireproximityprompt(child)
+            holdE(0.3)
+            task.wait(0.02)
+
+            -- คืนค่าเดิม
+            child.MaxActivationDistance = originalDistance
+            child.RequiresLineOfSight = originalLineOfSight
+            child.Parent = originalParent
         end
     end
 end
@@ -266,16 +278,12 @@ local function checkCanCollect(itemName, itemRarity)
     return rarityMatched or nameMatched
 end
 
--- Collect Loop with Priority Sorting
+-- Collect Loop with Priority Sorting & Prompt Sniping
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
 
-    local character = LocalPlayer.Character
-    local hrp = character and character:FindFirstChild("HumanoidRootPart")
-    local originalCFrame = hrp and hrp.CFrame
-
-    -- 1. รวบรวมไอเทมทั้งหมดที่ตรงเงื่อนไขเข้า List ก่อน
+    -- 1. รวบรวมไอเทมทั้งหมดที่ตรงเงื่อนไขเข้า List
     local validItemsList = {}
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
@@ -284,7 +292,7 @@ local function collectAllDrops()
 
             if checkCanCollect(itemName, itemRarity) then
                 local rarityLower = string.lower(itemRarity)
-                local priorityValue = rarityPriority[rarityLower] or 0 -- ถ้าไม่รู้จัก Rarity ให้เป็น 0
+                local priorityValue = rarityPriority[rarityLower] or 0
 
                 table.insert(validItemsList, {
                     folder = dropItemFolder,
@@ -301,31 +309,14 @@ local function collectAllDrops()
         return a.priority > b.priority
     end)
 
-    -- 3. เริ่มวนลูปเก็บตามลำดับความสำคัญ
+    -- 3. สั่งดึง Prompt มาเก็บของที่ตัวทีละชิ้นโดยไม่ต้องวาร์ป!
     for _, itemData in ipairs(validItemsList) do
         if not autoLoopFarmDrops then break end
 
-        -- เช็คว่าไอเทมยังอยู่จริงในแมป (ไม่โดนคนอื่นเก็บไปก่อน)
         if itemData.folder and itemData.folder.Parent then
-            local targetCFrame = getObjectCFrame(itemData.folder)
-
-            if hrp and targetCFrame then
-                -- วาร์ปไปหาไอเทม
-                hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
-                task.wait(0.1)
-
-                triggerPromptsIn(itemData.folder)
-                holdE(0.8)
-
-                sendWebhookNotification(itemData.name, itemData.rarity)
-
-                -- วาร์ปกลับจุดเดิม
-                if originalCFrame then
-                    hrp.CFrame = originalCFrame
-                end
-
-                task.wait(farmDelay)
-            end
+            triggerPromptWithoutTP(itemData.folder)
+            sendWebhookNotification(itemData.name, itemData.rarity)
+            task.wait(farmDelay)
         end
     end
 end
@@ -333,16 +324,16 @@ end
 MainTab:Section({ Title = "Auto Farm Controls" })
 
 MainTab:Toggle({
-    Title = "Auto Farm Selected Items",
+    Title = "Auto Farm Selected Items (No TP)",
     Default = false,
     Callback = function(state)
         autoLoopFarmDrops = state
         if autoLoopFarmDrops then
-            WindUI:Notify({ Title = "Auto Farm", Content = "Started Priority Farm Loop!", Duration = 2 })
+            WindUI:Notify({ Title = "Auto Farm", Content = "Started Prompt Sniping Loop!", Duration = 2 })
             task.spawn(function()
                 while autoLoopFarmDrops do
                     collectAllDrops()
-                    task.wait(0.5)
+                    task.wait(0.3)
                 end
             end)
         else
@@ -502,7 +493,7 @@ task.spawn(function()
 end)
 
 WindUI:Notify({
-    Title = "V11 Priority Loaded",
-    Content = "Items sorted by Rarity rank automatically!",
+    Title = "V12 Prompt Sniper Ready",
+    Content = "Fast item collection active!",
     Duration = 4
 })
