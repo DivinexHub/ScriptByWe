@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V9 (Fixed Empty Tabs Issue) ]]
+-- [[ DropsClient Farm V11 (Priority Sorting - Highest Rarity First) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -19,6 +19,20 @@ local selectedRarities = {}
 local selectedItemNames = {}
 local scannedNames = {}
 
+-- Priority Table (ยิ่งตัวเลขเยอะ ยิ่งความสำคัญสูง)
+local rarityPriority = {
+    ["astral realm"] = 10,
+    ["supreme"]      = 9,
+    ["ancient"]      = 8,
+    ["secret"]       = 7,
+    ["mythical"]     = 6,
+    ["legend"]       = 5,
+    ["epic"]         = 4,
+    ["rare"]         = 3,
+    ["uncommon"]     = 2,
+    ["common"]       = 1
+}
+
 -- Trade Variables
 local selectedTradePlayer = nil
 local playerMap = {}
@@ -31,7 +45,7 @@ local noclipConnection = nil
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Selector Tool V9",
+    Title = "DropsClient Selector Tool V11",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -40,7 +54,7 @@ local Window = WindUI:CreateWindow({
     Theme = "Dark"
 })
 
--- Create Tabs First
+-- Create Tabs
 local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
 local TradeTab = Window:Tab({ Title = "Player Trade", Icon = "arrow-right-left" })
 local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
@@ -141,7 +155,6 @@ local function toggleNoclip(state)
     end
 end
 
--- Safe Update Dropdown Helper
 local function updateDropdownOptions(dropdownObj, newValues)
     if not dropdownObj then return end
     pcall(function()
@@ -253,6 +266,7 @@ local function checkCanCollect(itemName, itemRarity)
     return rarityMatched or nameMatched
 end
 
+-- Collect Loop with Priority Sorting
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
@@ -261,32 +275,56 @@ local function collectAllDrops()
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
     local originalCFrame = hrp and hrp.CFrame
 
+    -- 1. รวบรวมไอเทมทั้งหมดที่ตรงเงื่อนไขเข้า List ก่อน
+    local validItemsList = {}
+
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
-        if not autoLoopFarmDrops then break end
-        
         for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
-            if not autoLoopFarmDrops then break end
-            
             local itemName, itemRarity = getItemDetails(dropItemFolder)
 
             if checkCanCollect(itemName, itemRarity) then
-                local targetCFrame = getObjectCFrame(dropItemFolder)
-                
-                if hrp and targetCFrame then
-                    hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
-                    task.wait(0.1)
-                    
-                    triggerPromptsIn(dropItemFolder)
-                    holdE(0.8)
-                    
-                    sendWebhookNotification(itemName, itemRarity)
+                local rarityLower = string.lower(itemRarity)
+                local priorityValue = rarityPriority[rarityLower] or 0 -- ถ้าไม่รู้จัก Rarity ให้เป็น 0
 
-                    if originalCFrame then
-                        hrp.CFrame = originalCFrame
-                    end
-                    
-                    task.wait(farmDelay)
+                table.insert(validItemsList, {
+                    folder = dropItemFolder,
+                    name = itemName,
+                    rarity = itemRarity,
+                    priority = priorityValue
+                })
+            end
+        end
+    end
+
+    -- 2. เรียงลำดับจาก Priority สูงสุดไปต่ำสุด (Astral Realm -> Common)
+    table.sort(validItemsList, function(a, b)
+        return a.priority > b.priority
+    end)
+
+    -- 3. เริ่มวนลูปเก็บตามลำดับความสำคัญ
+    for _, itemData in ipairs(validItemsList) do
+        if not autoLoopFarmDrops then break end
+
+        -- เช็คว่าไอเทมยังอยู่จริงในแมป (ไม่โดนคนอื่นเก็บไปก่อน)
+        if itemData.folder and itemData.folder.Parent then
+            local targetCFrame = getObjectCFrame(itemData.folder)
+
+            if hrp and targetCFrame then
+                -- วาร์ปไปหาไอเทม
+                hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
+                task.wait(0.1)
+
+                triggerPromptsIn(itemData.folder)
+                holdE(0.8)
+
+                sendWebhookNotification(itemData.name, itemData.rarity)
+
+                -- วาร์ปกลับจุดเดิม
+                if originalCFrame then
+                    hrp.CFrame = originalCFrame
                 end
+
+                task.wait(farmDelay)
             end
         end
     end
@@ -300,7 +338,7 @@ MainTab:Toggle({
     Callback = function(state)
         autoLoopFarmDrops = state
         if autoLoopFarmDrops then
-            WindUI:Notify({ Title = "Auto Farm", Content = "Started Farm Loop!", Duration = 2 })
+            WindUI:Notify({ Title = "Auto Farm", Content = "Started Priority Farm Loop!", Duration = 2 })
             task.spawn(function()
                 while autoLoopFarmDrops do
                     collectAllDrops()
@@ -464,7 +502,7 @@ task.spawn(function()
 end)
 
 WindUI:Notify({
-    Title = "V9 Loaded",
-    Content = "All tabs & components rendered successfully!",
+    Title = "V11 Priority Loaded",
+    Content = "Items sorted by Rarity rank automatically!",
     Duration = 4
 })
