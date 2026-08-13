@@ -167,7 +167,8 @@ MainTab:Dropdown({
     Desc = "เลือก Rarity ที่ต้องการเก็บ",
     Values = {
         "Common", "Uncommon", "Rare", "Epic",
-        "Legend", "Mythical", "Secret", "Ancient", "Supreme"
+        "Legend", "Mythical", "Secret", "Ancient", "Supreme",
+        "Astral Realm"
     },
     Multi = true,
     Default = {},
