@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V13 - Monhub (Ultra Webhook + Priority Sniper) ]]
+-- [[ DropsClient Farm V16 - Monhub (Stage Detection & Auto Return) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -13,14 +13,34 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
--- Variables
+-- Config File Setup
+local CONFIG_FILE_NAME = "Monhub_Config.json"
+
+-- Default Variables
 local autoLoopFarmDrops = false
 local farmDelay = 0.2
 local selectedRarities = {}
 local selectedItemNames = {}
 local scannedNames = {}
 
--- Priority Table (ยิ่งตัวเลขเยอะ ยิ่งความสำคัญสูง)
+-- Dungeon & Stage Variables
+local selectedStage = 1
+local autoReturnEnabled = false
+local currentDetectedStage = 0
+local STAGE_EVENT_CMD = "\xE5\x89\xAF\xE6\x9C\xAC\xE5\x85\xB3\xE5\x8D\xA1\xE5\x88\xB7\xE6\x80\xAA"
+local RETURN_TOWN_CMD = "\xE5\x89\xAF\xE6\x9C\xAC\xE5\x9B\x9E\xE5\x9F\x8E"
+
+-- Trade Variables
+local selectedTradePlayer = nil
+local playerMap = {}
+local TRADE_COMMAND_STRING = "\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82"
+
+-- Settings Variables
+local noclipEnabled = false
+local discordWebhookUrl = ""
+local noclipConnection = nil
+
+-- Priority Table
 local rarityPriority = {
     ["astral realm"] = 10,
     ["supreme"]      = 9,
@@ -37,56 +57,47 @@ local rarityPriority = {
 -- Webhook Configuration per Rarity
 local RarityWebhookConfig = {
     ["astral realm"] = {
-        Color = 0x00FFFF, -- Neon Cyan / Cosmic Blue
+        Color = 0x00FFFF,
         Title = "✨ 🌌 [ASTRAL REALM] ปรากฏการณ์ระดับจักรวาล! 🌌 ✨",
         Ping = "",
-        Gif = "https://media0.giphy.com/media/v1.Y2lkPTZjMDliOTUyc3lkOHJ0cXhxYWh3MWdpbzdvZXhlenFucTJxdGRyN3ZkNjhjMnhlMCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PkKzNQjwPy7GvxZbfe/giphy.gif" -- Cool Cosmic GIF Banner
+        Gif = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Z2eDRyNjlrbnhnMmVxOHpzeXFmZnRqN3NzeXV1bWZhMnRsdSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKSjRrfIPjeiVyM/giphy.gif"
     },
     ["supreme"] = {
-        Color = 0xFF1144, -- Crimson Red
+        Color = 0xFF1144,
         Title = "🔥 [SUPREME DROP!] ค้นพบไอเทมระดับสูงสุด!",
         Ping = ""
     },
     ["ancient"] = {
-        Color = 0xFF5500, -- Fiery Orange
+        Color = 0xFF5500,
         Title = "🔴 [ANCIENT DROP!] ค้นพบไอเทมโบราณ!",
         Ping = ""
     },
     ["secret"] = {
-        Color = 0x11FF88, -- Emerald Green
+        Color = 0x11FF88,
         Title = "🟢 [SECRET DROP!] ความลับถูกปลดล็อก!",
         Ping = ""
     },
     ["mythical"] = {
-        Color = 0xAA00FF, -- Mythic Purple
+        Color = 0xAA00FF,
         Title = "🟣 [MYTHICAL DROP!] ค้นพบไอเทมตำนาน!",
         Ping = ""
     }
 }
 
--- Trade Variables
-local selectedTradePlayer = nil
-local playerMap = {}
-local TRADE_COMMAND_STRING = "\xE8\xB5\xA0\xE9\x80\x81\xE8\xAF\xB7\xE6\xB1\x82"
-
--- Settings Variables
-local noclipEnabled = false
-local discordWebhookUrl = ""
-local noclipConnection = nil
-
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Monhub Selector Tool V13",
+    Title = "Monhub Selector Tool V16",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
-    Size = UDim2.fromOffset(580, 560),
+    Size = UDim2.fromOffset(580, 580),
     Transparent = true,
     Theme = "Dark"
 })
 
 -- Create Tabs
 local MainTab = Window:Tab({ Title = "Farm Selector", Icon = "mouse-pointer" })
+local StageTab = Window:Tab({ Title = "Dungeon Stage", Icon = "swords" })
 local TradeTab = Window:Tab({ Title = "Player Trade", Icon = "arrow-right-left" })
 local SettingTab = Window:Tab({ Title = "Settings", Icon = "settings" })
 
@@ -99,7 +110,6 @@ local function holdE(duration)
     end)
 end
 
--- PROMPT SNIPING (No Teleport)
 local function triggerPromptWithoutTP(parentObj)
     local character = LocalPlayer.Character
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
@@ -143,14 +153,31 @@ local function getItemDetails(dropItemFolder)
     return name, rarity
 end
 
--- Ultra Cool Discord Webhook Sender
+-- Return to Town Function
+local function returnToTown()
+    local event = ReplicatedStorage:FindFirstChild("Msg") 
+        and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
+        and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
+
+    if event then
+        pcall(function()
+            event:FireServer(RETURN_TOWN_CMD)
+        end)
+        WindUI:Notify({
+            Title = "Auto Return Triggered!",
+            Content = "ถึงด่านเป้าหมายแล้ว! กำลังวาร์ปกลับเมือง...",
+            Duration = 5
+        })
+    end
+end
+
+-- Discord Webhook Sender
 local function sendWebhookNotification(itemName, itemRarity)
     if discordWebhookUrl == "" or not string.find(discordWebhookUrl, "http") then return end
 
     local rarityKey = string.lower(itemRarity)
     local config = RarityWebhookConfig[rarityKey]
 
-    -- แจ้งเตือนเฉพาะไอเทมระดับ Ancient ขึ้นไป (ถ้าอยากให้แจ้งเตือนทุก Rarity สามารถลบเงื่อนไขนี้ออกได้ครับ)
     if not config then return end
 
     local requestFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
@@ -196,13 +223,12 @@ local function sendWebhookNotification(itemName, itemRarity)
             }
         },
         footer = {
-            text = "Monhub V13 • Automatic Prompt Sniper",
+            text = "Monhub V16 • Automatic Prompt Sniper",
             icon_url = "https://i.imgur.com/8QZ8G3M.png"
         },
         timestamp = DateTime.now():ToIsoDate()
     }
 
-    -- ใส่ GIF Banner เคลื่อนไหวหากเป็น Astral Realm
     if isAstral and config.Gif then
         embedData.image = {
             url = config.Gif
@@ -212,7 +238,7 @@ local function sendWebhookNotification(itemName, itemRarity)
     local payload = {
         username = isAstral and "🌌 Monhub | Astral Detector" or "🤖 Monhub | Loot Notifier",
         avatar_url = "https://i.imgur.com/8QZ8G3M.png",
-        content = config.Ping ~= "" and config.Ping or nil,
+        content = (config.Ping ~= "" and config.Ping) or nil,
         embeds = { embedData }
     }
 
@@ -269,7 +295,7 @@ end
 -- ==========================================
 MainTab:Section({ Title = "Rarity & Item Name Selection" })
 
-MainTab:Dropdown({
+local RarityDropdown = MainTab:Dropdown({
     Title = "Select Rarities (เลือก Rarity)",
     Desc = "เลือก Rarity ที่ต้องการเก็บ",
     Values = {
@@ -360,7 +386,6 @@ local function checkCanCollect(itemName, itemRarity)
     return rarityMatched or nameMatched
 end
 
--- Collect Loop with Priority Sorting & Prompt Sniping
 local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
@@ -385,12 +410,10 @@ local function collectAllDrops()
         end
     end
 
-    -- Sort Priority (Astral Realm First)
     table.sort(validItemsList, function(a, b)
         return a.priority > b.priority
     end)
 
-    -- Prompt Sniping Loop
     for _, itemData in ipairs(validItemsList) do
         if not autoLoopFarmDrops then break end
 
@@ -423,7 +446,7 @@ MainTab:Toggle({
     end
 })
 
-MainTab:Slider({
+local DelaySlider = MainTab:Slider({
     Title = "Farm Delay Speed",
     Min = 0.05,
     Max = 2.0,
@@ -435,7 +458,84 @@ MainTab:Slider({
 })
 
 -- ==========================================
--- 2. PLAYER TRADE TAB
+-- 2. DUNGEON STAGE TAB (NEW!)
+-- ==========================================
+StageTab:Section({ Title = "Dungeon Stage Detection" })
+
+-- สร้างรายการด่าน 1 - 35
+local stageOptions = {}
+for i = 1, 35 do
+    table.insert(stageOptions, "Stage " .. tostring(i))
+end
+
+local StageDropdown = StageTab:Dropdown({
+    Title = "Select Target Stage (เลือกด่านเป้าหมาย)",
+    Desc = "เลือกด่านที่ต้องการให้สั่งกลับเมืองอัตโนมัติ (1 - 35)",
+    Values = stageOptions,
+    Multi = false,
+    Default = "Stage 1",
+    Callback = function(selectedVal)
+        if selectedVal then
+            local stageNum = tonumber(string.match(selectedVal, "%d+"))
+            if stageNum then
+                selectedStage = stageNum
+            end
+        end
+    end
+})
+
+StageTab:Toggle({
+    Title = "Auto Return when Stage Match",
+    Desc = "เมื่อผ่านเข้าด่านที่เลือกไว้ จะสั่งกลับเมืองให้อัตโนมัติ",
+    Default = false,
+    Callback = function(state)
+        autoReturnEnabled = state
+        if autoReturnEnabled then
+            WindUI:Notify({ Title = "Auto Return Active", Content = "กำลังรอตรวจจับด่านที่: Stage " .. tostring(selectedStage), Duration = 3 })
+        end
+    end
+})
+
+local StageStatusLabel = StageTab:Button({
+    Title = "Current Detected Stage: None",
+    Desc = "กดเพื่อส่ง Remote กลับเมืองแบบ Manual ทันที",
+    Callback = function()
+        returnToTown()
+    end
+})
+
+-- REMOTE EVENT DETECTOR (HOOK / LISTEN)
+local function setupStageDetector()
+    local netWorkEvent = ReplicatedStorage:FindFirstChild("Msg") 
+        and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
+        and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
+
+    if not netWorkEvent then return end
+
+    -- Hook/Listen RemoteOnClientEvent (เมื่อ Server ยิงหรือตอบกลับมา)
+    netWorkEvent.OnClientEvent:Connect(function(...)
+        local args = {...}
+        if args[1] == STAGE_EVENT_CMD and type(args[2]) == "number" then
+            local stageNum = args[2]
+            currentDetectedStage = stageNum
+
+            -- อัปเดต UI ข้อความด่านปัจจุบัน
+            pcall(function()
+                if StageStatusLabel.SetTitle then
+                    StageStatusLabel:SetTitle("Current Detected Stage: Stage " .. tostring(stageNum))
+                end
+            end)
+
+            -- เช็คเงื่อนไข Auto Return
+            if autoReturnEnabled and stageNum >= selectedStage then
+                returnToTown()
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- 3. PLAYER TRADE TAB
 -- ==========================================
 TradeTab:Section({ Title = "Select Target Player" })
 
@@ -478,11 +578,7 @@ TradeTab:Button({
     Desc = "อัปเดตรายชื่อผู้เล่นทั้งหมดในเซิร์ฟเวอร์ใหม่",
     Callback = function()
         refreshPlayerList()
-        WindUI:Notify({
-            Title = "Players Refreshed",
-            Content = "Updated player list in server.",
-            Duration = 3
-        })
+        WindUI:Notify({ Title = "Players Refreshed", Content = "Updated player list in server.", Duration = 3 })
     end
 })
 
@@ -506,7 +602,6 @@ TradeTab:Button({
         end
 
         local targetUserId = selectedTradePlayer.UserId
-
         local event = ReplicatedStorage:FindFirstChild("Msg") 
             and ReplicatedStorage.Msg:FindFirstChild("RemoteEvent") 
             and ReplicatedStorage.Msg.RemoteEvent:FindFirstChild("NetWorkRemoteEvent")
@@ -528,11 +623,11 @@ TradeTab:Button({
 })
 
 -- ==========================================
--- 3. SETTINGS TAB
+-- 4. SETTINGS TAB
 -- ==========================================
 SettingTab:Section({ Title = "Player Modifications" })
 
-SettingTab:Toggle({
+local NoclipToggle = SettingTab:Toggle({
     Title = "Noclip (เดินทะลุกำแพง)",
     Desc = "เปิดใช้งานการเดินทะลุกำแพงและสิ่งกีดขวาง",
     Default = false,
@@ -543,7 +638,7 @@ SettingTab:Toggle({
 
 SettingTab:Section({ Title = "Discord Webhook Notification" })
 
-SettingTab:Input({
+local WebhookInput = SettingTab:Input({
     Title = "Discord Webhook URL",
     Desc = "ใส่ URL Webhook เพื่อรับการแจ้งเตือนเมื่อเก็บไอเทมได้",
     Placeholder = "https://discord.com/api/webhooks/...",
@@ -555,26 +650,122 @@ SettingTab:Input({
 
 SettingTab:Button({
     Title = "Test Webhook (Astral Realm Test)",
-    Desc = "ทดสอบส่งการแจ้งเตือนแบบ Astral Realm GIF ใน Discord",
     Callback = function()
         if discordWebhookUrl ~= "" then
             sendWebhookNotification("Astral Blade [TEST]", "Astral Realm")
-            WindUI:Notify({ Title = "Webhook Test", Content = "Sent Astral Realm test message to Discord!", Duration = 3 })
+            WindUI:Notify({ Title = "Webhook Test", Content = "Sent test message to Discord!", Duration = 3 })
         else
             WindUI:Notify({ Title = "Error", Content = "Please enter Webhook URL first!", Duration = 3 })
         end
     end
 })
 
--- Initialize Data AFTER UI Built
+-- Configuration Manager
+SettingTab:Section({ Title = "Configuration Manager" })
+
+local function SaveConfig()
+    local configData = {
+        SelectedRarities = selectedRarities,
+        SelectedItemNames = selectedItemNames,
+        FarmDelay = farmDelay,
+        NoclipEnabled = noclipEnabled,
+        WebhookUrl = discordWebhookUrl,
+        SelectedStage = selectedStage,
+        AutoReturnEnabled = autoReturnEnabled
+    }
+
+    local success, err = pcall(function()
+        local jsonString = HttpService:JSONEncode(configData)
+        if writefile then
+            writefile(CONFIG_FILE_NAME, jsonString)
+        end
+    end)
+
+    if success then
+        WindUI:Notify({ Title = "Config Saved", Content = "บันทึกการตั้งค่าลงไฟล์เรียบร้อยแล้ว!", Duration = 3 })
+    else
+        WindUI:Notify({ Title = "Config Error", Content = "เกิดข้อผิดพลาดในการบันทึก: " .. tostring(err), Duration = 3 })
+    end
+end
+
+local function LoadConfig()
+    if not isfile or not isfile(CONFIG_FILE_NAME) then
+        return
+    end
+
+    local success, err = pcall(function()
+        local fileContent = readfile(CONFIG_FILE_NAME)
+        local configData = HttpService:JSONEncode(fileContent)
+
+        if configData then
+            if configData.SelectedRarities then
+                selectedRarities = configData.SelectedRarities
+                if RarityDropdown.SetValues then RarityDropdown:SetValues(selectedRarities) end
+            end
+
+            if configData.SelectedItemNames then
+                selectedItemNames = configData.SelectedItemNames
+                if NameDropdown.SetValues then NameDropdown:SetValues(selectedItemNames) end
+            end
+
+            if configData.FarmDelay then
+                farmDelay = configData.FarmDelay
+                if DelaySlider.Set then DelaySlider:Set(farmDelay) end
+            end
+
+            if configData.NoclipEnabled ~= nil then
+                noclipEnabled = configData.NoclipEnabled
+                if NoclipToggle.Set then NoclipToggle:Set(noclipEnabled) end
+            end
+
+            if configData.WebhookUrl then
+                discordWebhookUrl = configData.WebhookUrl
+                if WebhookInput.Set then WebhookInput:Set(discordWebhookUrl) end
+            end
+
+            if configData.SelectedStage then
+                selectedStage = configData.SelectedStage
+                if StageDropdown.Set then StageDropdown:Set("Stage " .. tostring(selectedStage)) end
+            end
+
+            if configData.AutoReturnEnabled ~= nil then
+                autoReturnEnabled = configData.AutoReturnEnabled
+            end
+        end
+    end)
+
+    if success then
+        WindUI:Notify({ Title = "Config Loaded", Content = "โหลดการตั้งค่าเดิมสำเร็จ!", Duration = 3 })
+    end
+end
+
+SettingTab:Button({
+    Title = "Save Config (บันทึกตั้งค่า)",
+    Desc = "บันทึกค่าในหน้า UI ทั้งหมดลงไฟล์ในเครื่อง",
+    Callback = function()
+        SaveConfig()
+    end
+})
+
+SettingTab:Button({
+    Title = "Load Config (โหลดตั้งค่า)",
+    Desc = "ดึงค่าการตั้งค่าจากไฟล์มาใส่ในหน้า UI",
+    Callback = function()
+        LoadConfig()
+    end
+})
+
+-- Auto Initialize Data & Auto Load Config on Execute
 task.spawn(function()
     task.wait(1)
     scanItemNames()
     refreshPlayerList()
+    setupStageDetector()
+    LoadConfig()
 end)
 
 WindUI:Notify({
-    Title = "Monhub V13 Ready",
-    Content = "Ultra Webhook UI & Astral GIF Banner Active!",
+    Title = "Monhub V16 Ready",
+    Content = "Stage Detection & Auto Return Active!",
     Duration = 4
 })
