@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V12 (Priority Sorting + Prompt Sniping / No Teleport) ]]
+-- [[ DropsClient Farm V13 - Monhub (Ultra Webhook + Priority Sniper) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local Stats = game:GetService("Stats")
 local LocalPlayer = Players.LocalPlayer
 
 -- Variables
@@ -33,6 +34,36 @@ local rarityPriority = {
     ["common"]       = 1
 }
 
+-- Webhook Configuration per Rarity
+local RarityWebhookConfig = {
+    ["astral realm"] = {
+        Color = 0x00FFFF, -- Neon Cyan / Cosmic Blue
+        Title = "✨ 🌌 [ASTRAL REALM] ปรากฏการณ์ระดับจักรวาล! 🌌 ✨",
+        Ping = "",
+        Gif = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Z2eDRyNjlrbnhnMmVxOHpzeXFmZnRqN3NzeXV1bWZhMnRsdSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKSjRrfIPjeiVyM/giphy.gif" -- Cool Cosmic GIF Banner
+    },
+    ["supreme"] = {
+        Color = 0xFF1144, -- Crimson Red
+        Title = "🔥 [SUPREME DROP!] ค้นพบไอเทมระดับสูงสุด!",
+        Ping = ""
+    },
+    ["ancient"] = {
+        Color = 0xFF5500, -- Fiery Orange
+        Title = "🔴 [ANCIENT DROP!] ค้นพบไอเทมโบราณ!",
+        Ping = ""
+    },
+    ["secret"] = {
+        Color = 0x11FF88, -- Emerald Green
+        Title = "🟢 [SECRET DROP!] ความลับถูกปลดล็อก!",
+        Ping = ""
+    },
+    ["mythical"] = {
+        Color = 0xAA00FF, -- Mythic Purple
+        Title = "🟣 [MYTHICAL DROP!] ค้นพบไอเทมตำนาน!",
+        Ping = ""
+    }
+}
+
 -- Trade Variables
 local selectedTradePlayer = nil
 local playerMap = {}
@@ -45,7 +76,7 @@ local noclipConnection = nil
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "DropsClient Selector Tool V12",
+    Title = "Monhub Selector Tool V13",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -68,7 +99,7 @@ local function holdE(duration)
     end)
 end
 
--- PROMPT SNIPING: ดึง Prompt มาที่ตัวเราชั่วคราวเพื่อยิงกด โดยไม่ต้องวาร์ป
+-- PROMPT SNIPING (No Teleport)
 local function triggerPromptWithoutTP(parentObj)
     local character = LocalPlayer.Character
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
@@ -80,17 +111,15 @@ local function triggerPromptWithoutTP(parentObj)
             local originalDistance = child.MaxActivationDistance
             local originalLineOfSight = child.RequiresLineOfSight
 
-            -- ปรับแต่ง Prompt ให้กดง่าย
             child.RequiresLineOfSight = false
             child.MaxActivationDistance = 999999
-            child.Parent = hrp -- ดึงมาแปะไว้ที่ HumanoidRootPart ของตัวเรา
+            child.Parent = hrp
 
             task.wait(0.02)
             fireproximityprompt(child)
             holdE(0.3)
             task.wait(0.02)
 
-            -- คืนค่าเดิม
             child.MaxActivationDistance = originalDistance
             child.RequiresLineOfSight = originalLineOfSight
             child.Parent = originalParent
@@ -114,24 +143,77 @@ local function getItemDetails(dropItemFolder)
     return name, rarity
 end
 
--- Discord Webhook Sender
+-- Ultra Cool Discord Webhook Sender
 local function sendWebhookNotification(itemName, itemRarity)
     if discordWebhookUrl == "" or not string.find(discordWebhookUrl, "http") then return end
+
+    local rarityKey = string.lower(itemRarity)
+    local config = RarityWebhookConfig[rarityKey]
+
+    -- แจ้งเตือนเฉพาะไอเทมระดับ Ancient ขึ้นไป (ถ้าอยากให้แจ้งเตือนทุก Rarity สามารถลบเงื่อนไขนี้ออกได้ครับ)
+    if not config then return end
 
     local requestFunc = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
     if not requestFunc then return end
 
-    local payload = {
-        embeds = {{
-            title = "🎁 Item Collected!",
-            color = 65280,
-            fields = {
-                { name = "Player", value = LocalPlayer.Name, inline = true },
-                { name = "Item Name", value = itemName ~= "" and itemName or "Unknown", inline = true },
-                { name = "Rarity", value = itemRarity ~= "" and itemRarity or "Unknown", inline = true }
+    local isAstral = (rarityKey == "astral realm")
+    local pingMs = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+
+    local descriptionText = string.format("ผู้เล่น **%s** สไนป์ไอเทมระดับ **%s** สำเร็จ!", LocalPlayer.Name, itemRarity)
+    if isAstral then
+        descriptionText = "🚨 **ALERT: ASTRAL REALM ACQUIRED!** 🚨\nยินดีด้วย! คุณเพิ่งสไนป์ไอเทมระดับสูงสุดในจักรวาลได้สำเร็จด้วย Monhub Sniper!"
+    end
+
+    local embedData = {
+        title = config.Title,
+        description = descriptionText,
+        color = config.Color,
+        fields = {
+            {
+                name = "📦 ไอเทมที่ได้",
+                value = string.format("```yaml\n%s\n```", itemName ~= "" and itemName or "Unknown Item"),
+                inline = true
             },
-            timestamp = DateTime.now():ToIsoDate()
-        }}
+            {
+                name = "💎 ความแรร์ (Rarity)",
+                value = string.format("```fix\n%s\n```", itemRarity ~= "" and itemRarity or "Unknown"),
+                inline = true
+            },
+            {
+                name = "🌐 Ping",
+                value = string.format("`%d ms`", pingMs),
+                inline = true
+            },
+            {
+                name = "👤 ผู้เล่น (Player)",
+                value = string.format("[%s](https://www.roblox.com/users/%d/profile)", LocalPlayer.Name, LocalPlayer.UserId),
+                inline = true
+            },
+            {
+                name = "🎮 Job ID (Server)",
+                value = string.format("```lua\ngame.JobId = \"%s\"\n```", game.JobId),
+                inline = false
+            }
+        },
+        footer = {
+            text = "Monhub V13 • Automatic Prompt Sniper",
+            icon_url = "https://i.imgur.com/8QZ8G3M.png"
+        },
+        timestamp = DateTime.now():ToIsoDate()
+    }
+
+    -- ใส่ GIF Banner เคลื่อนไหวหากเป็น Astral Realm
+    if isAstral and config.Gif then
+        embedData.image = {
+            url = config.Gif
+        }
+    end
+
+    local payload = {
+        username = isAstral and "🌌 Monhub | Astral Detector" or "🤖 Monhub | Loot Notifier",
+        avatar_url = "https://i.imgur.com/8QZ8G3M.png",
+        content = config.Ping ~= "" and config.Ping or nil,
+        embeds = { embedData }
     }
 
     task.spawn(function()
@@ -283,7 +365,6 @@ local function collectAllDrops()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
 
-    -- 1. รวบรวมไอเทมทั้งหมดที่ตรงเงื่อนไขเข้า List
     local validItemsList = {}
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
@@ -304,12 +385,12 @@ local function collectAllDrops()
         end
     end
 
-    -- 2. เรียงลำดับจาก Priority สูงสุดไปต่ำสุด (Astral Realm -> Common)
+    -- Sort Priority (Astral Realm First)
     table.sort(validItemsList, function(a, b)
         return a.priority > b.priority
     end)
 
-    -- 3. สั่งดึง Prompt มาเก็บของที่ตัวทีละชิ้นโดยไม่ต้องวาร์ป!
+    -- Prompt Sniping Loop
     for _, itemData in ipairs(validItemsList) do
         if not autoLoopFarmDrops then break end
 
@@ -329,7 +410,7 @@ MainTab:Toggle({
     Callback = function(state)
         autoLoopFarmDrops = state
         if autoLoopFarmDrops then
-            WindUI:Notify({ Title = "Auto Farm", Content = "Started Prompt Sniping Loop!", Duration = 2 })
+            WindUI:Notify({ Title = "Auto Farm", Content = "Started Priority Prompt Sniper Loop!", Duration = 2 })
             task.spawn(function()
                 while autoLoopFarmDrops do
                     collectAllDrops()
@@ -473,12 +554,12 @@ SettingTab:Input({
 })
 
 SettingTab:Button({
-    Title = "Test Webhook Notification",
-    Desc = "ทดสอบการส่งข้อความไปยัง Discord Webhook",
+    Title = "Test Webhook (Astral Realm Test)",
+    Desc = "ทดสอบส่งการแจ้งเตือนแบบ Astral Realm GIF ใน Discord",
     Callback = function()
         if discordWebhookUrl ~= "" then
-            sendWebhookNotification("Test Item", "Test Rarity")
-            WindUI:Notify({ Title = "Webhook Test", Content = "Sent test message to Discord!", Duration = 3 })
+            sendWebhookNotification("Astral Blade [TEST]", "Astral Realm")
+            WindUI:Notify({ Title = "Webhook Test", Content = "Sent Astral Realm test message to Discord!", Duration = 3 })
         else
             WindUI:Notify({ Title = "Error", Content = "Please enter Webhook URL first!", Duration = 3 })
         end
@@ -493,7 +574,7 @@ task.spawn(function()
 end)
 
 WindUI:Notify({
-    Title = "V12 Prompt Sniper Ready",
-    Content = "Fast item collection active!",
+    Title = "Monhub V13 Ready",
+    Content = "Ultra Webhook UI & Astral GIF Banner Active!",
     Duration = 4
 })
