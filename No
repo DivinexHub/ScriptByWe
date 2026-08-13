@@ -40,7 +40,7 @@ local RarityWebhookConfig = {
         Color = 0x00FFFF, -- Neon Cyan / Cosmic Blue
         Title = "✨ 🌌 [ASTRAL REALM] ปรากฏการณ์ระดับจักรวาล! 🌌 ✨",
         Ping = "",
-        Gif = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Z2eDRyNjlrbnhnMmVxOHpzeXFmZnRqN3NzeXV1bWZhMnRsdSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o7TKSjRrfIPjeiVyM/giphy.gif" -- Cool Cosmic GIF Banner
+        Gif = "https://media0.giphy.com/media/v1.Y2lkPTZjMDliOTUyc3lkOHJ0cXhxYWh3MWdpbzdvZXhlenFucTJxdGRyN3ZkNjhjMnhlMCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/PkKzNQjwPy7GvxZbfe/giphy.gif" -- Cool Cosmic GIF Banner
     },
     ["supreme"] = {
         Color = 0xFF1144, -- Crimson Red
