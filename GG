@@ -2,12 +2,13 @@ local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/rel
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 
 -- Remote Event Reference
 local RemoteEvent = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Packages"):WaitForChild("Events"):WaitForChild("RemoteEvent")
 
--- Toggle States
+-- Toggle States & Global Delay
 local States = {
     AutoHaki = false,
     AutoSkyEgg = false,
@@ -17,8 +18,8 @@ local States = {
     AutoUltimate = false
 }
 
--- Configurable Loop Delay (seconds)
-local LOOP_DELAY = 0.1
+local LOOP_DELAY = 0.1 -- ค่าเริ่มต้น (ปรับเปลี่ยนได้ผ่าน Slider)
+local DetectedCharacterName = nil -- เก็บชื่อยูนิตที่ดักจับได้
 
 -- Helper Functions
 local function fireRemote(path, params)
@@ -31,7 +32,8 @@ local function fireRemote(path, params)
 end
 
 local function getEquippedCharacterName()
-    -- Check player character model first
+    if DetectedCharacterName then return DetectedCharacterName end
+    
     if LocalPlayer.Character then
         local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
         if tool then return tool.Name end
@@ -40,7 +42,6 @@ local function getEquippedCharacterName()
         if charFolder then return charFolder.Name end
     end
     
-    -- Check player stats / attributes fallback
     local equippedAttr = LocalPlayer:GetAttribute("EquippedCharacter") or LocalPlayer:GetAttribute("Equipped")
     if equippedAttr then return tostring(equippedAttr) end
     
@@ -54,13 +55,23 @@ end
 
 -- Create Window & Tab
 local Window = WindUI:CreateWindow({
-    Title = "Crate Script",
+    Title = "MonHub | Anime Star Anime V1  ",
     Icon = "rbxassetid://4483345998",
     Author = "WindUI",
     Folder = "CrateScriptConfig"
 })
 
 local MainTab = Window:Tab({ Title = "Main", Icon = "rbxassetid://4483345998" })
+
+-- Config Section: ปรับแต่ง Delay
+MainTab:Slider({
+    Title = "Loop Delay (seconds)",
+    Step = 0.01,
+    Value = { Min = 0.01, Max = 1, Default = 0.1 },
+    Callback = function(Value)
+        LOOP_DELAY = Value
+    end
+})
 
 -- 1. Auto Haki
 MainTab:Toggle({
@@ -100,7 +111,7 @@ MainTab:Toggle({
     Title = "Auto Rank Up",
     Callback = function(Value)
         States.AutoRankUp = Value
-        if Value then
+        if Value me
             task.spawn(function()
                 while States.AutoRankUp do
                     fireRemote("rankup/power", {})
@@ -111,30 +122,28 @@ MainTab:Toggle({
     end
 })
 
--- 4. Auto Click Fast
+-- 4. Auto Click Fast (จำลองคลิกหน้าจอ + ดักจับ Remote Spy ก่อนเริ่ม Loop)
 MainTab:Toggle({
     Title = "Auto Click Fast",
     Callback = function(Value)
         States.AutoClickFast = Value
         if Value then
             task.spawn(function()
-                -- Initial action to register click/detect character
+                -- 1. จำลองการคลิกหน้าจอด้วย VirtualUser เพื่อส่ง Remote M1 ออกไป
+                VirtualUser:CaptureController()
+                VirtualUser:Button1Down(Vector2.new(0, 0))
+                task.wait(0.05)
+                VirtualUser:Button1Up(Vector2.new(0, 0))
+                
+                -- 2. ดักดึงค่าชื่อยูนิต
                 local charName = getEquippedCharacterName()
                 
                 if not charName then
-                    -- Fallback attempt: Trigger standard tool click if available
-                    local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
-                    if tool then
-                        tool:Activate()
-                        charName = tool.Name
-                    end
-                end
-
-                if not charName then
-                    warn("[Auto Click Fast] Could not automatically detect equipped character.")
+                    warn("[Auto Click Fast] ไม่สามารถตรวจจับชื่อยูนิตจากระบบได้ กรุณาลองเปิดใหม่อีกครั้ง")
                     return
                 end
 
+                -- 3. เริ่มรันยิง Remote ตามชื่อที่ตรวจจับได้
                 while States.AutoClickFast do
                     fireRemote("combat/m1", { charName, 1 })
                     task.wait(LOOP_DELAY)
