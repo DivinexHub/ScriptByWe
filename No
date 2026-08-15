@@ -1,4 +1,4 @@
--- [[ DropsClient Farm V16 - Monhub (Stage Detection & Auto Return) ]]
+-- [[ DropsClient Farm V17 - Monhub (Preset Items + Stage Detection & Auto Return) ]]
 -- UI Library: WindUI
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
@@ -21,7 +21,9 @@ local autoLoopFarmDrops = false
 local farmDelay = 0.2
 local selectedRarities = {}
 local selectedItemNames = {}
-local scannedNames = {}
+
+-- Preset Item Names (ไอเทมเริ่มต้นที่มีใน Dropdown ทันที)
+local scannedNames = {"Sacred Flame", "Shadow Crystal"}
 
 -- Dungeon & Stage Variables
 local selectedStage = 1
@@ -86,7 +88,7 @@ local RarityWebhookConfig = {
 
 -- Create Window
 local Window = WindUI:CreateWindow({
-    Title = "Monhub Selector Tool V16",
+    Title = "Monhub Selector Tool V17",
     Icon = "list-filter",
     Author = "Auto Farm Tool",
     Folder = "DropsAutoFarm",
@@ -223,7 +225,7 @@ local function sendWebhookNotification(itemName, itemRarity)
             }
         },
         footer = {
-            text = "Monhub V16 • Automatic Prompt Sniper",
+            text = "Monhub V17 • Automatic Prompt Sniper",
             icon_url = "https://i.imgur.com/8QZ8G3M.png"
         },
         timestamp = DateTime.now():ToIsoDate()
@@ -312,8 +314,8 @@ local RarityDropdown = MainTab:Dropdown({
 
 local NameDropdown = MainTab:Dropdown({
     Title = "Select Item Names (เลือกชื่อของ)",
-    Desc = "เลือกชื่อไอเทมที่พบในแมป",
-    Values = {"None Found"},
+    Desc = "เลือกชื่อไอเทมที่พบในแมป (มี Sacred Flame & Shadow Crystal แล้ว)",
+    Values = scannedNames, -- โหลด Preset ไอเทมตั้งแต่เริ่มต้น
     Multi = true,
     Default = {},
     Callback = function(values)
@@ -325,8 +327,11 @@ local function scanItemNames()
     local dropsClientFolder = Workspace:FindFirstChild("DropsClient")
     if not dropsClientFolder then return end
 
-    local foundNameMap = {}
-    local newNames = {}
+    local foundNameMap = {
+        ["Sacred Flame"] = true,
+        ["Shadow Crystal"] = true
+    }
+    local newNames = {"Sacred Flame", "Shadow Crystal"}
 
     for _, childFolder in ipairs(dropsClientFolder:GetChildren()) do
         for _, dropItemFolder in ipairs(childFolder:GetChildren()) do
@@ -458,11 +463,10 @@ local DelaySlider = MainTab:Slider({
 })
 
 -- ==========================================
--- 2. DUNGEON STAGE TAB (NEW!)
+-- 2. DUNGEON STAGE TAB
 -- ==========================================
 StageTab:Section({ Title = "Dungeon Stage Detection" })
 
--- สร้างรายการด่าน 1 - 35
 local stageOptions = {}
 for i = 1, 35 do
     table.insert(stageOptions, "Stage " .. tostring(i))
@@ -512,21 +516,18 @@ local function setupStageDetector()
 
     if not netWorkEvent then return end
 
-    -- Hook/Listen RemoteOnClientEvent (เมื่อ Server ยิงหรือตอบกลับมา)
     netWorkEvent.OnClientEvent:Connect(function(...)
         local args = {...}
         if args[1] == STAGE_EVENT_CMD and type(args[2]) == "number" then
             local stageNum = args[2]
             currentDetectedStage = stageNum
 
-            -- อัปเดต UI ข้อความด่านปัจจุบัน
             pcall(function()
                 if StageStatusLabel.SetTitle then
                     StageStatusLabel:SetTitle("Current Detected Stage: Stage " .. tostring(stageNum))
                 end
             end)
 
-            -- เช็คเงื่อนไข Auto Return
             if autoReturnEnabled and stageNum >= selectedStage then
                 returnToTown()
             end
@@ -765,7 +766,7 @@ task.spawn(function()
 end)
 
 WindUI:Notify({
-    Title = "Monhub V16 Ready",
-    Content = "Stage Detection & Auto Return Active!",
+    Title = "Monhub V17 Ready",
+    Content = "Sacred Flame & Shadow Crystal Added!",
     Duration = 4
 })
