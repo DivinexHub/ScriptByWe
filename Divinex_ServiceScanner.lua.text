@@ -1,0 +1,512 @@
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+local Players        = game:GetService("Players")
+local RS             = game:GetService("ReplicatedStorage")
+local Lighting       = game:GetService("Lighting")
+local SoundService   = game:GetService("SoundService")
+local CoreGui        = game:GetService("CoreGui")
+local HttpService    = game:GetService("HttpService")
+local LocalPlayer    = Players.LocalPlayer
+
+-- ========================
+-- Window
+-- ========================
+local Window = WindUI:CreateWindow({
+    Title  = "Divinex | Service Scanner",
+    Icon   = "scan-line",
+    Author = "Divinex",
+    Folder = "DivinexScanner",
+    Save   = false,
+    Size   = UDim2.fromOffset(460, 560),
+    Theme  = "Dark",
+})
+
+local ScanTab    = Window:Tab({ Title = "Scanner",  Icon = "scan-line"   })
+local RemoteTab  = Window:Tab({ Title = "Remotes",  Icon = "radio"       })
+local ResultTab  = Window:Tab({ Title = "Results",  Icon = "file-text"   })
+local ExportTab  = Window:Tab({ Title = "Export",   Icon = "download"    })
+
+-- ========================
+-- State
+-- ========================
+local scanData      = {}
+local scanComplete  = false
+local statusPara    = nil
+local remotePara    = nil
+local resultPara    = nil
+local exportPara    = nil
+
+-- ========================
+-- Helpers
+-- ========================
+local function canRead(fn)
+    local ok = pcall(fn)
+    return ok
+end
+
+local function canWrite(fn)
+    local ok = pcall(fn)
+    return ok
+end
+
+local function setStatus(para, msg)
+    pcall(function() if para then para:SetDesc(msg) end end)
+end
+
+local function boolStr(v)
+    return v and "YES" or "NO"
+end
+
+-- ========================
+-- Scanner Modules
+-- ========================
+local function scanPlayers()
+    local d = {}
+    d.localName        = LocalPlayer.Name
+    d.localDisplayName = LocalPlayer.DisplayName
+    d.localUserId      = LocalPlayer.UserId
+    d.totalPlayers     = #Players:GetPlayers()
+    d.playerList       = {}
+    for _, p in Players:GetPlayers() do
+        table.insert(d.playerList, {
+            name    = p.Name,
+            userId  = p.UserId,
+            team    = p.Team and p.Team.Name or "None",
+        })
+    end
+    return d
+end
+
+local function scanRemotes()
+    local remoteEvents    = {}
+    local remoteFunctions = {}
+    local bindables       = {}
+
+    for _, v in RS:GetDescendants() do
+        if v:IsA("RemoteEvent") then
+            table.insert(remoteEvents, v:GetFullName())
+        elseif v:IsA("RemoteFunction") then
+            table.insert(remoteFunctions, v:GetFullName())
+        elseif v:IsA("BindableEvent") or v:IsA("BindableFunction") then
+            table.insert(bindables, v:GetFullName())
+        end
+    end
+
+    return {
+        remoteEvents      = remoteEvents,
+        remoteFunctions   = remoteFunctions,
+        bindables         = bindables,
+        totalRE           = #remoteEvents,
+        totalRF           = #remoteFunctions,
+        totalBindable     = #bindables,
+    }
+end
+
+local function scanWorkspace()
+    local ws = workspace
+    local ok1 = canRead(function()  return ws.Gravity end)
+    local ok2 = canWrite(function() ws.Gravity = ws.Gravity end)
+    local ok3 = canWrite(function()
+        local p = Instance.new("Part")
+        p.Parent = ws
+        p:Destroy()
+    end)
+
+    local topChildren = {}
+    for _, c in ws:GetChildren() do
+        table.insert(topChildren, string.format("%s (%s)", c.Name, c.ClassName))
+    end
+
+    return {
+        canReadGravity   = ok1,
+        canWriteGravity  = ok2,
+        canInsertPart    = ok3,
+        currentGravity   = ws.Gravity,
+        streamingEnabled = ws.StreamingEnabled,
+        childCount       = #ws:GetChildren(),
+        topChildren      = topChildren,
+    }
+end
+
+local function scanLighting()
+    local ok1 = canRead(function()  return Lighting.Brightness end)
+    local ok2 = canWrite(function() Lighting.Brightness = Lighting.Brightness end)
+    local ok3 = canRead(function()  return Lighting.TimeOfDay end)
+    local ok4 = canWrite(function() Lighting.TimeOfDay = Lighting.TimeOfDay end)
+    return {
+        canReadBrightness  = ok1,
+        canWriteBrightness = ok2,
+        canReadTime        = ok3,
+        canWriteTime       = ok4,
+        brightness         = Lighting.Brightness,
+        timeOfDay          = Lighting.TimeOfDay,
+        ambient            = tostring(Lighting.Ambient),
+    }
+end
+
+local function scanCoreGui()
+    local canInject = canWrite(function()
+        local sg = Instance.new("ScreenGui")
+        sg.Parent = CoreGui
+        sg:Destroy()
+    end)
+    local guiChildren = {}
+    for _, c in CoreGui:GetChildren() do
+        table.insert(guiChildren, string.format("%s (%s)", c.Name, c.ClassName))
+    end
+    return {
+        canInjectGui = canInject,
+        childCount   = #CoreGui:GetChildren(),
+        children     = guiChildren,
+    }
+end
+
+local function scanSound()
+    local ok = canRead(function() return SoundService.AmbientReverb end)
+    local ok2 = canWrite(function() SoundService.VolumeMultiplier = SoundService.VolumeMultiplier end)
+    return {
+        accessible        = ok,
+        canChangeVolume   = ok2,
+        volumeMultiplier  = SoundService.VolumeMultiplier,
+    }
+end
+
+local function scanExecutorCapabilities()
+    return {
+        writefile       = writefile ~= nil,
+        readfile        = readfile ~= nil,
+        isfile          = isfile ~= nil,
+        makefolder      = makefolder ~= nil,
+        setclipboard    = setclipboard ~= nil,
+        getfenv         = getfenv ~= nil,
+        hookfunction    = hookfunction ~= nil,
+        fireproximityprompt = fireproximityprompt ~= nil,
+        fireclickdetector   = fireclickdetector ~= nil,
+        firesignal          = firesignal ~= nil,
+        syn                 = syn ~= nil,
+        http_request        = http_request ~= nil or (http ~= nil and http.request ~= nil),
+        Drawing             = Drawing ~= nil,
+    }
+end
+
+-- ========================
+-- Run Full Scan
+-- ========================
+local function runScan()
+    scanData = {}
+    setStatus(statusPara, "⏳ Scanning Players...")
+    task.wait(0.2)
+    scanData.Players = pcall(scanPlayers) and scanPlayers() or {}
+
+    setStatus(statusPara, "⏳ Scanning Remotes in ReplicatedStorage...")
+    task.wait(0.2)
+    scanData.Remotes = pcall(scanRemotes) and scanRemotes() or {}
+
+    setStatus(statusPara, "⏳ Scanning Workspace...")
+    task.wait(0.2)
+    scanData.Workspace = pcall(scanWorkspace) and scanWorkspace() or {}
+
+    setStatus(statusPara, "⏳ Scanning Lighting...")
+    task.wait(0.2)
+    scanData.Lighting = pcall(scanLighting) and scanLighting() or {}
+
+    setStatus(statusPara, "⏳ Scanning CoreGui...")
+    task.wait(0.2)
+    scanData.CoreGui = pcall(scanCoreGui) and scanCoreGui() or {}
+
+    setStatus(statusPara, "⏳ Scanning SoundService...")
+    task.wait(0.2)
+    scanData.SoundService = pcall(scanSound) and scanSound() or {}
+
+    setStatus(statusPara, "⏳ Scanning Executor Capabilities...")
+    task.wait(0.2)
+    scanData.Executor = scanExecutorCapabilities()
+
+    scanData.meta = {
+        scannedAt  = tostring(os.time()),
+        gameId     = tostring(game.PlaceId),
+        gameJobId  = tostring(game.JobId),
+        playerName = LocalPlayer.Name,
+    }
+
+    scanComplete = true
+    setStatus(statusPara, "✅ Scan complete! Go to Results or Export tab.")
+    WindUI:Notify({ Title = "Scan Complete ✅", Content = "All services scanned. Export in Export tab.", Duration = 4, Icon = "check-circle" })
+
+    -- Auto-update remote paragraph
+    if scanData.Remotes then
+        local lines = {
+            string.format("RemoteEvents:    %d", scanData.Remotes.totalRE or 0),
+            string.format("RemoteFunctions: %d", scanData.Remotes.totalRF or 0),
+            string.format("Bindables:       %d", scanData.Remotes.totalBindable or 0),
+            "",
+            "=== RemoteEvents ===",
+        }
+        for _, re in scanData.Remotes.remoteEvents or {} do
+            table.insert(lines, "  • " .. re)
+        end
+        table.insert(lines, "=== RemoteFunctions ===")
+        for _, rf in scanData.Remotes.remoteFunctions or {} do
+            table.insert(lines, "  • " .. rf)
+        end
+        table.insert(lines, "=== Bindables ===")
+        for _, b in scanData.Remotes.bindables or {} do
+            table.insert(lines, "  • " .. b)
+        end
+        setStatus(remotePara, table.concat(lines, "\n"))
+    end
+
+    -- Auto-update result paragraph
+    if scanData then
+        local ws  = scanData.Workspace or {}
+        local lit = scanData.Lighting or {}
+        local cg  = scanData.CoreGui or {}
+        local snd = scanData.SoundService or {}
+        local exe = scanData.Executor or {}
+        local plr = scanData.Players or {}
+
+        local summary = string.format(
+            "Players: %d online\n\n"..
+            "=== Workspace ===\n"..
+            "Read Gravity:  %s\nWrite Gravity: %s\n"..
+            "Insert Part:   %s\nGravity: %s\n"..
+            "Streaming:     %s\n\n"..
+            "=== Lighting ===\n"..
+            "R/W Brightness: %s / %s\n"..
+            "R/W TimeOfDay:  %s / %s\n"..
+            "Brightness: %s | Time: %s\n\n"..
+            "=== CoreGui ===\n"..
+            "Inject GUI: %s | Children: %s\n\n"..
+            "=== SoundService ===\n"..
+            "Accessible: %s | Change Vol: %s\n\n"..
+            "=== Executor ===\n"..
+            "writefile: %s | readfile: %s\n"..
+            "hookfunction: %s | firesignal: %s\n"..
+            "fireclickdetector: %s | Drawing: %s",
+            plr.totalPlayers or 0,
+            boolStr(ws.canReadGravity), boolStr(ws.canWriteGravity),
+            boolStr(ws.canInsertPart), tostring(ws.currentGravity),
+            boolStr(ws.streamingEnabled),
+            boolStr(lit.canReadBrightness), boolStr(lit.canWriteBrightness),
+            boolStr(lit.canReadTime), boolStr(lit.canWriteTime),
+            tostring(lit.brightness), tostring(lit.timeOfDay),
+            boolStr(cg.canInjectGui), tostring(cg.childCount),
+            boolStr(snd.accessible), boolStr(snd.canChangeVolume),
+            boolStr(exe.writefile), boolStr(exe.readfile),
+            boolStr(exe.hookfunction), boolStr(exe.firesignal),
+            boolStr(exe.fireclickdetector), boolStr(exe.Drawing)
+        )
+        setStatus(resultPara, summary)
+    end
+end
+
+-- ========================
+-- Export to File
+-- ========================
+local function buildExportText()
+    local lines = {}
+    local function push(s) table.insert(lines, s) end
+
+    push("=== DIVINEX SERVICE SCANNER REPORT ===")
+    push(string.format("Player : %s  |  PlaceId: %s", scanData.meta.playerName, scanData.meta.gameId))
+    push(string.format("JobId  : %s", scanData.meta.gameJobId))
+    push(string.format("Time   : %s", scanData.meta.scannedAt))
+    push(string.rep("=", 50))
+
+    push("\n[ PLAYERS ]")
+    local plr = scanData.Players or {}
+    push(string.format("Total Online: %d", plr.totalPlayers or 0))
+    for _, p in plr.playerList or {} do
+        push(string.format("  • %s (UserId: %d, Team: %s)", p.name, p.userId, p.team))
+    end
+
+    push("\n[ REMOTE EVENTS ] (" .. tostring((scanData.Remotes or {}).totalRE or 0) .. ")")
+    for _, re in (scanData.Remotes or {}).remoteEvents or {} do push("  • " .. re) end
+
+    push("\n[ REMOTE FUNCTIONS ] (" .. tostring((scanData.Remotes or {}).totalRF or 0) .. ")")
+    for _, rf in (scanData.Remotes or {}).remoteFunctions or {} do push("  • " .. rf) end
+
+    push("\n[ BINDABLES ] (" .. tostring((scanData.Remotes or {}).totalBindable or 0) .. ")")
+    for _, b in (scanData.Remotes or {}).bindables or {} do push("  • " .. b) end
+
+    push("\n[ WORKSPACE ]")
+    local ws = scanData.Workspace or {}
+    push(string.format("  Read Gravity:   %s", boolStr(ws.canReadGravity)))
+    push(string.format("  Write Gravity:  %s", boolStr(ws.canWriteGravity)))
+    push(string.format("  Insert Part:    %s", boolStr(ws.canInsertPart)))
+    push(string.format("  Gravity Value:  %s", tostring(ws.currentGravity)))
+    push(string.format("  Streaming:      %s", boolStr(ws.streamingEnabled)))
+    push(string.format("  Child Count:    %d", ws.childCount or 0))
+    for _, c in ws.topChildren or {} do push("    • " .. c) end
+
+    push("\n[ LIGHTING ]")
+    local lit = scanData.Lighting or {}
+    push(string.format("  R/W Brightness: %s / %s  (val: %s)", boolStr(lit.canReadBrightness), boolStr(lit.canWriteBrightness), tostring(lit.brightness)))
+    push(string.format("  R/W TimeOfDay:  %s / %s  (val: %s)", boolStr(lit.canReadTime), boolStr(lit.canWriteTime), tostring(lit.timeOfDay)))
+    push(string.format("  Ambient:        %s", tostring(lit.ambient)))
+
+    push("\n[ COREGUI ]")
+    local cg = scanData.CoreGui or {}
+    push(string.format("  Inject GUI:  %s", boolStr(cg.canInjectGui)))
+    push(string.format("  Children:    %d", cg.childCount or 0))
+    for _, c in cg.children or {} do push("    • " .. c) end
+
+    push("\n[ SOUNDSERVICE ]")
+    local snd = scanData.SoundService or {}
+    push(string.format("  Accessible:     %s", boolStr(snd.accessible)))
+    push(string.format("  Change Volume:  %s", boolStr(snd.canChangeVolume)))
+    push(string.format("  VolumeMultiplier: %s", tostring(snd.volumeMultiplier)))
+
+    push("\n[ EXECUTOR CAPABILITIES ]")
+    local exe = scanData.Executor or {}
+    for cap, val in exe do
+        push(string.format("  %-25s %s", cap .. ":", boolStr(val)))
+    end
+
+    push("\n" .. string.rep("=", 50))
+    push("END OF REPORT")
+
+    return table.concat(lines, "\n")
+end
+
+local function exportToFile(format)
+    if not scanComplete then
+        WindUI:Notify({ Title = "Not Scanned Yet", Content = "Run a scan first!", Duration = 3, Icon = "alert-circle" })
+        return
+    end
+
+    local filename = string.format("DivinexScan_%s_%s.%s",
+        LocalPlayer.Name,
+        tostring(os.time()),
+        format
+    )
+
+    local content = ""
+    if format == "txt" then
+        content = buildExportText()
+    elseif format == "json" then
+        local ok, encoded = pcall(function() return HttpService:JSONEncode(scanData) end)
+        content = ok and encoded or buildExportText()
+    end
+
+    if writefile then
+        if makefolder then pcall(function() makefolder("DivinexScanner") end) end
+        local path = "DivinexScanner/" .. filename
+        pcall(function() writefile(path, content) end)
+        setStatus(exportPara, "✅ Exported to:\n" .. path .. "\n\nSize: " .. #content .. " chars")
+        WindUI:Notify({ Title = "Exported! 📄", Content = filename, Duration = 5, Icon = "download" })
+    else
+        -- Executor ไม่มี writefile → copy ไปคลิปบอร์ดแทน
+        if setclipboard then
+            setclipboard(content)
+            setStatus(exportPara, "⚠️ writefile not supported\nContent copied to clipboard instead!")
+            WindUI:Notify({ Title = "Copied to Clipboard", Content = "writefile() not available", Duration = 4, Icon = "clipboard" })
+        else
+            setStatus(exportPara, "❌ Neither writefile nor setclipboard is supported on this executor.")
+        end
+    end
+end
+
+-- ========================
+-- UI: Scanner Tab
+-- ========================
+ScanTab:Section({ Title = "1. Run Scan", Icon = "scan-line" })
+ScanTab:Paragraph({
+    Title = "What this scans",
+    Desc  = "Players, ReplicatedStorage Remotes, Workspace, Lighting, CoreGui, SoundService, and Executor capabilities. Results are exported to a file or clipboard.",
+})
+
+statusPara = ScanTab:Paragraph({ Title = "Status", Desc = "Idle — press Scan to begin" })
+
+ScanTab:Button({
+    Title    = "▶ Run Full Scan",
+    Desc     = "Scan all services and collect data",
+    Icon     = "scan-line",
+    Callback = function()
+        scanComplete = false
+        setStatus(statusPara, "⏳ Starting scan...")
+        task.spawn(runScan)
+    end,
+})
+
+-- ========================
+-- UI: Remotes Tab
+-- ========================
+RemoteTab:Section({ Title = "2. Remote List", Icon = "radio" })
+RemoteTab:Paragraph({ Title = "Info", Desc = "Run a scan first, then switch here to see all RemoteEvents, RemoteFunctions, and Bindables." })
+remotePara = RemoteTab:Paragraph({ Title = "Remotes", Desc = "No scan data yet" })
+
+RemoteTab:Button({
+    Title    = "Rescan Remotes Only",
+    Desc     = "Quickly re-scan ReplicatedStorage for remotes",
+    Icon     = "refresh-cw",
+    Callback = function()
+        task.spawn(function()
+            local r = {}
+            pcall(function() r = scanRemotes() end)
+            scanData.Remotes = r
+            local lines = {
+                string.format("RemoteEvents:    %d", r.totalRE or 0),
+                string.format("RemoteFunctions: %d", r.totalRF or 0),
+                string.format("Bindables:       %d", r.totalBindable or 0), "",
+                "=== RemoteEvents ===",
+            }
+            for _, re in r.remoteEvents or {} do table.insert(lines, "  • " .. re) end
+            table.insert(lines, "=== RemoteFunctions ===")
+            for _, rf in r.remoteFunctions or {} do table.insert(lines, "  • " .. rf) end
+            table.insert(lines, "=== Bindables ===")
+            for _, b in r.bindables or {} do table.insert(lines, "  • " .. b) end
+            setStatus(remotePara, table.concat(lines, "\n"))
+            WindUI:Notify({ Title = "Remotes Rescanned", Content = string.format("%d RE, %d RF, %d Bindable", r.totalRE or 0, r.totalRF or 0, r.totalBindable or 0), Duration = 3, Icon = "check" })
+        end)
+    end,
+})
+
+-- ========================
+-- UI: Results Tab
+-- ========================
+ResultTab:Section({ Title = "3. Scan Results", Icon = "file-text" })
+ResultTab:Paragraph({ Title = "Info", Desc = "Summary of all service capability checks after scan." })
+resultPara = ResultTab:Paragraph({ Title = "Results", Desc = "No scan data yet" })
+
+-- ========================
+-- UI: Export Tab
+-- ========================
+ExportTab:Section({ Title = "4. Export Results", Icon = "download" })
+ExportTab:Paragraph({
+    Title = "Export Info",
+    Desc  = "Exports scan results to a file in your executor's workspace folder.\nIf writefile() is unavailable, content is copied to clipboard instead.",
+})
+exportPara = ExportTab:Paragraph({ Title = "Export Status", Desc = "No scan data yet" })
+
+ExportTab:Button({
+    Title    = "Export as TXT",
+    Desc     = "Save human-readable report → DivinexScanner/DivinexScan_Name_time.txt",
+    Icon     = "file-text",
+    Callback = function() task.spawn(exportToFile, "txt") end,
+})
+ExportTab:Button({
+    Title    = "Export as JSON",
+    Desc     = "Save raw structured data → DivinexScanner/DivinexScan_Name_time.json",
+    Icon     = "braces",
+    Callback = function() task.spawn(exportToFile, "json") end,
+})
+ExportTab:Button({
+    Title    = "Copy TXT to Clipboard",
+    Desc     = "Copy the full report text directly to clipboard",
+    Icon     = "clipboard",
+    Callback = function()
+        if not scanComplete then
+            WindUI:Notify({ Title = "Not Scanned", Content = "Run a scan first!", Duration = 3, Icon = "alert-circle" })
+            return
+        end
+        if setclipboard then
+            setclipboard(buildExportText())
+            WindUI:Notify({ Title = "Copied! 📋", Content = "Report copied to clipboard", Duration = 3, Icon = "check" })
+        else
+            WindUI:Notify({ Title = "No clipboard access", Duration = 3, Icon = "x" })
+        end
+    end,
+})
+
+WindUI:Notify({ Title = "Divinex Scanner ✅", Content = "Press 'Run Full Scan' to begin", Duration = 4, Icon = "scan-line" })
