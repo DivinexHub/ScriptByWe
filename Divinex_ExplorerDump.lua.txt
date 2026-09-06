@@ -1,0 +1,542 @@
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+
+local Players     = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ========================
+-- Window
+-- ========================
+local Window = WindUI:CreateWindow({
+    Title  = "Divinex | Explorer Dump",
+    Icon   = "database",
+    Author = "Divinex",
+    Folder = "DivinexDump",
+    Save   = false,
+    Size   = UDim2.fromOffset(460, 540),
+    Theme  = "Dark",
+})
+
+local DumpTab   = Window:Tab({ Title = "Dump",    Icon = "database"  })
+local RemoteTab = Window:Tab({ Title = "Remotes", Icon = "radio"     })
+local ExportTab = Window:Tab({ Title = "Export",  Icon = "download"  })
+
+-- ========================
+-- State
+-- ========================
+local dumpData      = nil
+local statusPara    = nil
+local progressPara  = nil
+local remotePara    = nil
+local exportPara    = nil
+local isDumping     = false
+
+-- ========================
+-- All services to attempt scanning
+-- ========================
+local SERVICE_NAMES = {
+    "Workspace",
+    "Players",
+    "ReplicatedStorage",
+    "ReplicatedFirst",
+    "StarterGui",
+    "StarterPack",
+    "StarterPlayer",
+    "Lighting",
+    "SoundService",
+    "CoreGui",
+    "NetworkClient",
+    "TextChatService",
+    "VoiceChatService",
+    "LocalizationService",
+    "MaterialService",
+    "Teams",
+    "Chat",
+    "AchievementService",
+    "AdService",
+    "AnalyticsService",
+    "AppStorageService",
+    "AppLifecycleObserverService",
+    "AnimationClipProvider",
+    "AssetService",
+    "AvatarEditorService",
+    "BadgeService",
+    "BrowserService",
+    "CaptureService",
+    "ClickDetectorService",
+    "ClipboardService",
+    "ContentProvider",
+    "ContextActionService",
+    "DataStoreService",
+    "FriendService",
+    "GamepadService",
+    "GroupService",
+    "GuiService",
+    "HapticService",
+    "HttpRbxApiService",
+    "InsertService",
+    "InputService",
+    "KeyboardService",
+    "MarketplaceService",
+    "MemStorageService",
+    "MessagingService",
+    "MouseService",
+    "NotificationService",
+    "PathfindingService",
+    "PhysicsService",
+    "PlatformService",
+    "PlayerEmotesService",
+    "PointsService",
+    "PolicyService",
+    "RbxAnalyticsService",
+    "RunService",
+    "ScriptService",
+    "Selection",
+    "SessionService",
+    "SocialService",
+    "SpawnerService",
+    "Stats",
+    "TaskScheduler",
+    "TeleportService",
+    "TestService",
+    "TouchInputService",
+    "TweenService",
+    "UGCValidationService",
+    "UserInputService",
+    "UserService",
+    "VRService",
+    "VirtualInputManager",
+    "VisibilityService",
+}
+
+-- ========================
+-- Helpers
+-- ========================
+local function setStatus(para, msg)
+    pcall(function() if para then para:SetDesc(msg) end end)
+end
+
+local function getProps(obj)
+    local props = {}
+
+    -- ClassName always available
+    props.ClassName = obj.ClassName
+
+    -- Name
+    local okN, name = pcall(function() return obj.Name end)
+    if okN then props.Name = name end
+
+    -- Common props by class
+    local function tryAdd(key, fn)
+        local ok, v = pcall(fn)
+        if ok and v ~= nil then
+            props[key] = tostring(v)
+        end
+    end
+
+    if obj:IsA("BasePart") then
+        tryAdd("Size",     function() return tostring(obj.Size) end)
+        tryAdd("Position", function() return tostring(obj.Position) end)
+        tryAdd("Anchored", function() return obj.Anchored end)
+        tryAdd("CanCollide", function() return obj.CanCollide end)
+
+    elseif obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        props.FullPath = obj:GetFullName()
+
+    elseif obj:IsA("ModuleScript") or obj:IsA("LocalScript") or obj:IsA("Script") then
+        props.FullPath = obj:GetFullName()
+        tryAdd("Disabled", function() return obj.Disabled end)
+
+    elseif obj:IsA("StringValue") or obj:IsA("IntValue") or obj:IsA("BoolValue") or obj:IsA("NumberValue") then
+        tryAdd("Value", function() return obj.Value end)
+
+    elseif obj:IsA("ProximityPrompt") then
+        tryAdd("ActionText",  function() return obj.ActionText end)
+        tryAdd("ObjectText",  function() return obj.ObjectText end)
+        tryAdd("HoldDuration",function() return obj.HoldDuration end)
+        tryAdd("Enabled",     function() return obj.Enabled end)
+
+    elseif obj:IsA("ClickDetector") then
+        tryAdd("MaxActivationDistance", function() return obj.MaxActivationDistance end)
+
+    elseif obj:IsA("Model") then
+        tryAdd("PrimaryPart", function() return obj.PrimaryPart and obj.PrimaryPart.Name or "nil" end)
+
+    elseif obj:IsA("Humanoid") then
+        tryAdd("Health",    function() return obj.Health end)
+        tryAdd("MaxHealth", function() return obj.MaxHealth end)
+        tryAdd("WalkSpeed", function() return obj.WalkSpeed end)
+
+    elseif obj:IsA("Animation") then
+        tryAdd("AnimationId", function() return obj.AnimationId end)
+
+    elseif obj:IsA("Sound") then
+        tryAdd("SoundId",  function() return obj.SoundId end)
+        tryAdd("Volume",   function() return obj.Volume end)
+        tryAdd("Playing",  function() return obj.IsPlaying end)
+
+    elseif obj:IsA("BillboardGui") or obj:IsA("ScreenGui") or obj:IsA("SurfaceGui") then
+        tryAdd("Enabled",   function() return obj.Enabled end)
+        tryAdd("FullPath",  function() return obj:GetFullName() end)
+
+    elseif obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+        tryAdd("Text",      function() return obj.Text end)
+        tryAdd("Visible",   function() return obj.Visible end)
+
+    elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+        tryAdd("Image",   function() return obj.Image end)
+        tryAdd("Visible", function() return obj.Visible end)
+
+    elseif obj:IsA("Folder") then
+        props.ChildCount = tostring(#obj:GetChildren())
+
+    elseif obj:IsA("BindableEvent") or obj:IsA("BindableFunction") then
+        props.FullPath = obj:GetFullName()
+    end
+
+    return props
+end
+
+-- Recursive tree builder
+local function buildTree(obj, maxDepth, currentDepth, remotes, scripts, prompts, clickDetectors)
+    currentDepth = currentDepth or 0
+    if currentDepth > (maxDepth or 20) then return { _truncated = true } end
+
+    local node = {
+        name      = obj.Name,
+        class     = obj.ClassName,
+        path      = obj:GetFullName(),
+        props     = getProps(obj),
+        children  = {},
+    }
+
+    -- Collect special objects
+    if obj:IsA("RemoteEvent") then
+        table.insert(remotes.events, obj:GetFullName())
+    elseif obj:IsA("RemoteFunction") then
+        table.insert(remotes.functions, obj:GetFullName())
+    elseif obj:IsA("BindableEvent") then
+        table.insert(remotes.bindableEvents, obj:GetFullName())
+    elseif obj:IsA("BindableFunction") then
+        table.insert(remotes.bindableFunctions, obj:GetFullName())
+    elseif obj:IsA("LocalScript") or obj:IsA("Script") or obj:IsA("ModuleScript") then
+        table.insert(scripts, { path = obj:GetFullName(), class = obj.ClassName })
+    elseif obj:IsA("ProximityPrompt") then
+        local ok, info = pcall(function()
+            return { path = obj:GetFullName(), action = obj.ActionText, hold = obj.HoldDuration }
+        end)
+        if ok then table.insert(prompts, info) end
+    elseif obj:IsA("ClickDetector") then
+        table.insert(clickDetectors, obj:GetFullName())
+    end
+
+    -- Recurse children
+    local ok, children = pcall(function() return obj:GetChildren() end)
+    if ok and children then
+        for _, child in children do
+            local ok2, childNode = pcall(buildTree, child, maxDepth, currentDepth + 1, remotes, scripts, prompts, clickDetectors)
+            if ok2 and childNode then
+                table.insert(node.children, childNode)
+            end
+        end
+    end
+
+    return node
+end
+
+-- ========================
+-- Main Dump Function
+-- ========================
+local function runDump()
+    if isDumping then return end
+    isDumping = true
+
+    local result = {
+        meta = {
+            player    = LocalPlayer.Name,
+            userId    = LocalPlayer.UserId,
+            placeId   = tostring(game.PlaceId),
+            jobId     = game.JobId,
+            timestamp = tostring(os.time()),
+        },
+        services    = {},
+        allRemotes  = { events = {}, functions = {}, bindableEvents = {}, bindableFunctions = {} },
+        allScripts  = {},
+        allPrompts  = {},
+        allClickDetectors = {},
+    }
+
+    local total    = #SERVICE_NAMES
+    local scanned  = 0
+    local failed   = 0
+
+    for _, svcName in SERVICE_NAMES do
+        scanned += 1
+        setStatus(statusPara, string.format("⏳ [%d/%d] Scanning: %s", scanned, total, svcName))
+        setStatus(progressPara, string.format("Progress: %d%% | ✅ %d | ❌ %d",
+            math.floor(scanned / total * 100), scanned - failed, failed))
+        task.wait(0.05)
+
+        local ok, svc = pcall(game.GetService, game, svcName)
+        if not ok or not svc then
+            failed += 1
+            result.services[svcName] = { accessible = false }
+            continue
+        end
+
+        local ok2, tree = pcall(buildTree, svc, 15, 0,
+            result.allRemotes, result.allScripts, result.allPrompts, result.allClickDetectors)
+
+        if ok2 and tree then
+            tree.accessible = true
+            result.services[svcName] = tree
+        else
+            failed += 1
+            result.services[svcName] = { accessible = false, error = tostring(tree) }
+        end
+    end
+
+    dumpData = result
+    isDumping = false
+
+    local remoteCount =
+        #result.allRemotes.events +
+        #result.allRemotes.functions +
+        #result.allRemotes.bindableEvents +
+        #result.allRemotes.bindableFunctions
+
+    setStatus(statusPara, string.format(
+        "✅ Dump complete!\nServices: %d scanned, %d failed\nRemotes found: %d\nScripts found: %d\nProximityPrompts: %d\nClickDetectors: %d",
+        scanned, failed, remoteCount, #result.allScripts, #result.allPrompts, #result.allClickDetectors
+    ))
+    setStatus(progressPara, "Done! Go to Remotes or Export tab.")
+
+    -- Update remote tab
+    local lines = {
+        string.format("RemoteEvents:      %d", #result.allRemotes.events),
+        string.format("RemoteFunctions:   %d", #result.allRemotes.functions),
+        string.format("BindableEvents:    %d", #result.allRemotes.bindableEvents),
+        string.format("BindableFunctions: %d", #result.allRemotes.bindableFunctions),
+        "", "=== RemoteEvents ===",
+    }
+    for _, v in result.allRemotes.events do table.insert(lines, "  • " .. v) end
+    table.insert(lines, "\n=== RemoteFunctions ===")
+    for _, v in result.allRemotes.functions do table.insert(lines, "  • " .. v) end
+    table.insert(lines, "\n=== BindableEvents ===")
+    for _, v in result.allRemotes.bindableEvents do table.insert(lines, "  • " .. v) end
+    table.insert(lines, "\n=== BindableFunctions ===")
+    for _, v in result.allRemotes.bindableFunctions do table.insert(lines, "  • " .. v) end
+    table.insert(lines, "\n=== Scripts/Modules ===")
+    for _, v in result.allScripts do table.insert(lines, string.format("  [%s] %s", v.class, v.path)) end
+    table.insert(lines, "\n=== ProximityPrompts ===")
+    for _, v in result.allPrompts do
+        table.insert(lines, string.format("  • %s (Action: %s, Hold: %ss)", v.path, v.action, tostring(v.hold)))
+    end
+    table.insert(lines, "\n=== ClickDetectors ===")
+    for _, v in result.allClickDetectors do table.insert(lines, "  • " .. v) end
+
+    setStatus(remotePara, table.concat(lines, "\n"))
+
+    WindUI:Notify({
+        Title   = "Dump Complete ✅",
+        Content = string.format("%d services | %d remotes | %d scripts", scanned, remoteCount, #result.allScripts),
+        Duration = 5, Icon = "database",
+    })
+end
+
+-- ========================
+-- Export
+-- ========================
+local function buildTxtDump()
+    if not dumpData then return "No dump data." end
+    local lines = {}
+    local function push(s) table.insert(lines, s) end
+
+    push("=== DIVINEX FULL EXPLORER DUMP ===")
+    push(string.format("Player:    %s (UserId: %d)", dumpData.meta.player, dumpData.meta.userId))
+    push(string.format("PlaceId:   %s | JobId: %s", dumpData.meta.placeId, dumpData.meta.jobId))
+    push(string.format("Timestamp: %s", dumpData.meta.timestamp))
+    push(string.rep("=", 60))
+
+    push(string.format("\n[ REMOTES — %d total ]",
+        #dumpData.allRemotes.events + #dumpData.allRemotes.functions +
+        #dumpData.allRemotes.bindableEvents + #dumpData.allRemotes.bindableFunctions))
+    push("-- RemoteEvents --")
+    for _, v in dumpData.allRemotes.events do push("  " .. v) end
+    push("-- RemoteFunctions --")
+    for _, v in dumpData.allRemotes.functions do push("  " .. v) end
+    push("-- BindableEvents --")
+    for _, v in dumpData.allRemotes.bindableEvents do push("  " .. v) end
+    push("-- BindableFunctions --")
+    for _, v in dumpData.allRemotes.bindableFunctions do push("  " .. v) end
+
+    push(string.format("\n[ SCRIPTS/MODULES — %d total ]", #dumpData.allScripts))
+    for _, v in dumpData.allScripts do push(string.format("  [%s] %s", v.class, v.path)) end
+
+    push(string.format("\n[ PROXIMITY PROMPTS — %d total ]", #dumpData.allPrompts))
+    for _, v in dumpData.allPrompts do
+        push(string.format("  %s  (Action: '%s', Hold: %ss)", v.path, v.action, tostring(v.hold)))
+    end
+
+    push(string.format("\n[ CLICK DETECTORS — %d total ]", #dumpData.allClickDetectors))
+    for _, v in dumpData.allClickDetectors do push("  " .. v) end
+
+    push("\n" .. string.rep("=", 60))
+    push("[ FULL SERVICE TREE ]")
+
+    -- Recursive tree printer
+    local function printTree(node, indent)
+        indent = indent or ""
+        if not node or not node.name then return end
+        local propStr = ""
+        if node.props then
+            local parts = {}
+            for k, v in node.props do
+                if k ~= "ClassName" and k ~= "Name" then
+                    table.insert(parts, string.format("%s=%s", k, v))
+                end
+            end
+            if #parts > 0 then propStr = "  { " .. table.concat(parts, ", ") .. " }" end
+        end
+        push(string.format("%s[%s] %s%s", indent, node.class or "?", node.name or "?", propStr))
+        if node.children then
+            for _, child in node.children do
+                printTree(child, indent .. "  ")
+            end
+        end
+    end
+
+    for svcName, svcData in dumpData.services do
+        push(string.format("\n=== %s ===", svcName))
+        if svcData.accessible == false then
+            push("  (not accessible)")
+        else
+            printTree(svcData, "  ")
+        end
+    end
+
+    push("\n" .. string.rep("=", 60))
+    push("END OF DUMP")
+    return table.concat(lines, "\n")
+end
+
+local function doExport(format)
+    if not dumpData then
+        WindUI:Notify({ Title = "No Data", Content = "Run a dump first!", Duration = 3, Icon = "alert-circle" })
+        return
+    end
+
+    local fname = string.format("ExplorerDump_%s_%s.%s", LocalPlayer.Name, tostring(os.time()), format)
+    local content
+
+    if format == "json" then
+        local ok, enc = pcall(function() return HttpService:JSONEncode(dumpData) end)
+        content = ok and enc or buildTxtDump()
+    else
+        content = buildTxtDump()
+    end
+
+    local path = "DivinexDump/" .. fname
+
+    if writefile then
+        if makefolder then pcall(function() makefolder("DivinexDump") end) end
+        local ok, err = pcall(function() writefile(path, content) end)
+        if ok then
+            setStatus(exportPara, string.format("✅ Saved!\nPath: %s\nSize: %d KB", path, math.floor(#content / 1024)))
+            WindUI:Notify({ Title = "Exported! 📄", Content = fname, Duration = 5, Icon = "download" })
+        else
+            setStatus(exportPara, "❌ writefile failed: " .. tostring(err))
+        end
+    elseif setclipboard then
+        -- Clip first 500k chars if too large for clipboard
+        local clip = #content > 500000 and content:sub(1, 500000) .. "\n...[TRUNCATED]" or content
+        setclipboard(clip)
+        setStatus(exportPara, "⚠️ writefile not available\nCopied to clipboard! (" .. math.floor(#content/1024) .. " KB)")
+        WindUI:Notify({ Title = "Copied! 📋", Content = "writefile() unavailable — clipboard used", Duration = 4, Icon = "clipboard" })
+    else
+        setStatus(exportPara, "❌ No export method available (writefile & setclipboard both missing)")
+    end
+end
+
+-- ========================
+-- UI: Dump Tab
+-- ========================
+DumpTab:Section({ Title = "Full Explorer Dump", Icon = "database" })
+DumpTab:Paragraph({
+    Title = "What this scans",
+    Desc  = "Deep-scans every accessible Roblox service (~70 services). Collects the full instance tree, all RemoteEvents/Functions, Scripts, ProximityPrompts, ClickDetectors, and key properties. Exports to TXT or JSON file.",
+})
+
+statusPara   = DumpTab:Paragraph({ Title = "Status",   Desc = "Idle — press Start Dump" })
+progressPara = DumpTab:Paragraph({ Title = "Progress", Desc = "0%" })
+
+DumpTab:Button({
+    Title    = "▶ Start Full Dump",
+    Desc     = "Scan all ~70 services — may take 5-15 seconds",
+    Icon     = "database",
+    Callback = function()
+        if isDumping then
+            WindUI:Notify({ Title = "Already Running", Content = "Dump is in progress...", Duration = 2, Icon = "loader" })
+            return
+        end
+        dumpData = nil
+        setStatus(statusPara, "⏳ Starting dump...")
+        setStatus(progressPara, "0%")
+        task.spawn(runDump)
+    end,
+})
+
+-- ========================
+-- UI: Remotes Tab
+-- ========================
+RemoteTab:Section({ Title = "All Remotes & Scripts", Icon = "radio" })
+RemoteTab:Paragraph({ Title = "Info", Desc = "Run a dump first. All RemoteEvents, RemoteFunctions, Bindables, Scripts, ProximityPrompts, and ClickDetectors will appear here." })
+remotePara = RemoteTab:Paragraph({ Title = "Results", Desc = "No data yet" })
+
+-- ========================
+-- UI: Export Tab
+-- ========================
+ExportTab:Section({ Title = "Export Dump", Icon = "download" })
+ExportTab:Paragraph({
+    Title = "Export Info",
+    Desc  = "TXT = human-readable full tree\nJSON = raw structured data\nFallback: copies to clipboard if writefile() is unavailable",
+})
+exportPara = ExportTab:Paragraph({ Title = "Export Status", Desc = "No data yet" })
+
+ExportTab:Button({
+    Title    = "Export TXT",
+    Desc     = "Full readable tree → DivinexDump/ExplorerDump_Name_time.txt",
+    Icon     = "file-text",
+    Callback = function() task.spawn(doExport, "txt") end,
+})
+ExportTab:Button({
+    Title    = "Export JSON",
+    Desc     = "Raw structured data → DivinexDump/ExplorerDump_Name_time.json",
+    Icon     = "braces",
+    Callback = function() task.spawn(doExport, "json") end,
+})
+ExportTab:Button({
+    Title    = "Copy TXT to Clipboard",
+    Desc     = "Copy full text report to clipboard",
+    Icon     = "clipboard",
+    Callback = function()
+        if not dumpData then
+            WindUI:Notify({ Title = "No Data", Content = "Run a dump first!", Duration = 3, Icon = "alert-circle" })
+            return
+        end
+        if setclipboard then
+            local txt = buildTxtDump()
+            local clip = #txt > 500000 and txt:sub(1, 500000) .. "\n...[TRUNCATED]" or txt
+            setclipboard(clip)
+            WindUI:Notify({ Title = "Copied! 📋", Content = math.floor(#txt/1024) .. " KB copied", Duration = 3, Icon = "check" })
+        else
+            WindUI:Notify({ Title = "No Clipboard Access", Duration = 3, Icon = "x" })
+        end
+    end,
+})
+
+WindUI:Notify({
+    Title   = "Divinex Explorer Dump ✅",
+    Content = "Press 'Start Full Dump' to scan everything",
+    Duration = 4, Icon = "database",
+})
